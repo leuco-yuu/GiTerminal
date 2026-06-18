@@ -323,6 +323,10 @@ gh auth status
 glab auth status
 ```
 
+## 版本历史
+
+完整版本更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 文档
 
 - [使用指南](docs/USAGE.md)
