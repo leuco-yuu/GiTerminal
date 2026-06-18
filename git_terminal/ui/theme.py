@@ -98,6 +98,26 @@ QLabel#brand {{
     font-weight: 600;
     font-size: 13px;
 }}
+
+QWidget#topMenuHost {{
+    background-color: transparent;
+}}
+QToolButton#topMenuButton {{
+    background-color: transparent;
+    color: {p['text']};
+    border: none;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 13px;
+}}
+QToolButton#topMenuButton:hover {{
+    background-color: {p['hover']};
+    color: {p['text']};
+}}
+QToolButton#topMenuButton::menu-indicator {{
+    image: none;
+    width: 0px;
+}}
 QLineEdit#commandCenter {{
     background-color: {p['input']};
     color: {p['text']};

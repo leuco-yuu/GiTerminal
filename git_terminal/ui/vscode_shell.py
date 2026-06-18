@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from pathlib import Path
+
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -15,14 +18,19 @@ from PyQt6.QtWidgets import (
 
 
 class IconButton(QToolButton):
-    def __init__(self, text: str, tooltip: str = "") -> None:
+    def __init__(self, text: str = "", tooltip: str = "", icon_path: str | None = None) -> None:
         super().__init__()
-        self.setText(text)
         self.setToolTip(tooltip)
         self.setCheckable(True)
         self.setFixedSize(54, 48)
-        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if icon_path and Path(icon_path).exists():
+            self.setIcon(QIcon(icon_path))
+            self.setIconSize(QSize(24, 24))
+            self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        else:
+            self.setText(text)
+            self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
 
 
 class ActivityBar(QFrame):
@@ -33,25 +41,32 @@ class ActivityBar(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 8)
         layout.setSpacing(2)
+        assets = Path(__file__).resolve().parents[1] / "assets"
+        # Activity bar is only for layout/navigation utilities, not duplicates of
+        # central workbench tabs. Icons are app-owned SVGs.
         items = [
-            ("📁", "Workspace"),
-            ("⑂", "Source Control"),
-            ("⎇", "Branches"),
-            ("☁", "Remotes"),
-            ("⚙", "Advanced"),
+            ("", "工作区 / Workspace", assets / "activity_workspace.svg"),
+            ("", "历史 / History", assets / "activity_history.svg"),
+            ("", "分支 / Branches", assets / "activity_branches.svg"),
+            ("", "远程 / Remotes", assets / "activity_remotes.svg"),
+            ("", "标签与 Stash", assets / "activity_tags.svg"),
+            ("", "高级 / Advanced", assets / "activity_advanced.svg"),
+            ("", "平台 / Providers", assets / "activity_platform.svg"),
+            ("", "Raw Git Terminal", assets / "activity_terminal.svg"),
+            ("", "Help / Shortcuts", assets / "activity_help.svg"),
         ]
         self.buttons: list[IconButton] = []
-        for index, (icon, tooltip) in enumerate(items):
-            button = IconButton(icon, tooltip)
+        for index, (text, tooltip, icon_path) in enumerate(items):
+            button = IconButton(text, tooltip, str(icon_path))
             if index == 0:
                 button.setChecked(True)
             button.clicked.connect(lambda _checked, b=button: self.activate(b))
             self.buttons.append(button)
             layout.addWidget(button)
         layout.addStretch()
-        self.account_button = IconButton("◎", "Accounts")
+        self.account_button = IconButton("", "Accounts", str(assets / "activity_account.svg"))
         self.account_button.setCheckable(False)
-        self.settings_button = IconButton("⚙", "Manage")
+        self.settings_button = IconButton("", "Manage / Theme", str(assets / "activity_settings.svg"))
         self.settings_button.setCheckable(False)
         layout.addWidget(self.account_button)
         layout.addWidget(self.settings_button)
@@ -65,7 +80,7 @@ class TopCommandBar(QFrame):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("topCommandBar")
-        self.setFixedHeight(42)
+        self.setFixedHeight(38)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 0, 10, 0)
         layout.setSpacing(8)
@@ -82,12 +97,22 @@ class TopCommandBar(QFrame):
         brand = QLabel("Git Terminal")
         brand.setObjectName("brand")
         layout.addWidget(brand)
+
+        # Visible in-template menu host. Native QMenuBar may be easy to miss on
+        # some platforms/themes, so Git menus are also rendered directly inside
+        # the uploaded template's top command bar.
+        self.menu_host = QWidget()
+        self.menu_host.setObjectName("topMenuHost")
+        self.menu_layout = QHBoxLayout(self.menu_host)
+        self.menu_layout.setContentsMargins(8, 0, 8, 0)
+        self.menu_layout.setSpacing(2)
+        layout.addWidget(self.menu_host)
         layout.addStretch(1)
 
         self.command_center = QLineEdit()
         self.command_center.setObjectName("commandCenter")
         self.command_center.setPlaceholderText("Search commands, branches, commits, remotes…")
-        self.command_center.setFixedWidth(440)
+        self.command_center.setFixedWidth(300)
         layout.addWidget(self.command_center)
         layout.addStretch(1)
 
@@ -182,23 +207,19 @@ class BottomPanel(QFrame):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("bottomPanel")
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(72)
         self.hide_callback = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.tabs = QTabWidget()
-        self.tabs.setObjectName("bottomTabs")
-        self.tabs.setDocumentMode(True)
-        self.tabs.setTabsClosable(False)
-        self.collapse_button = QPushButton("⌄")
-        self.collapse_button.setObjectName("collapseButton")
-        self.collapse_button.setToolTip("Hide Panel")
-        self.collapse_button.setFixedSize(28, 24)
-        self.collapse_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.collapse_button.clicked.connect(self.request_hide)
-        self.tabs.setCornerWidget(self.collapse_button, Qt.Corner.TopRightCorner)
-        layout.addWidget(self.tabs)
+
+        # No visible title/header: the whole bottom area is reserved for logs.
+        # Collapse/maximize controls are placed in the terminal input bar.
+        self.body = QWidget()
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setSpacing(0)
+        layout.addWidget(self.body, 1)
 
     def set_hide_callback(self, callback) -> None:
         self.hide_callback = callback
@@ -206,3 +227,4 @@ class BottomPanel(QFrame):
     def request_hide(self) -> None:
         if self.hide_callback:
             self.hide_callback()
+

@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QGridLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -48,7 +49,7 @@ from git_terminal.core.commands import GitCommandSpec, build_command_catalog
 from git_terminal.core.models import GitResult, GitStatusItem, RiskLevel
 from git_terminal.core.runner import GitRunner
 from git_terminal.core.safety import classify_git_command
-from git_terminal.ui.workers import GitCommandWorker
+from git_terminal.ui.workers import GitCommandWorker, ShellCommandWorker
 from git_terminal.ui.theme import apply_theme
 from git_terminal.ui.commit_graph import CommitGraphView, GraphCommit
 from git_terminal.ui.vscode_shell import ActivityBar, BottomPanel, SidePanel, TopCommandBar
@@ -106,7 +107,7 @@ class MainWindow(QMainWindow):
         icon_path = Path(__file__).resolve().parents[1] / "assets" / "git_terminal_icon.svg"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
-        self.resize(1500, 930)
+        self.resize(1180, 760)
         self.runner = GitRunner()
         self.command_catalog = build_command_catalog()
         self._threads: List[Tuple[QThread, GitCommandWorker]] = []
@@ -117,9 +118,9 @@ class MainWindow(QMainWindow):
         self._left_collapsed = False
         self._right_collapsed = False
         self._bottom_collapsed = False
-        self._last_left_width = 240
-        self._last_right_width = 300
-        self._last_bottom_height = 220
+        self._last_left_width = 220
+        self._last_right_width = 260
+        self._last_bottom_height = 190
 
         self._build_actions()
         self._build_ui()
@@ -134,64 +135,150 @@ class MainWindow(QMainWindow):
     # UI construction
     # ------------------------------------------------------------------
     def _build_actions(self) -> None:
-        self.open_repo_action = QAction("打开仓库", self)
+        self.open_repo_action = QAction("打开本地仓库...", self)
         self.open_repo_action.triggered.connect(self.open_repository)
-        self.init_repo_action = QAction("初始化仓库", self)
+        self.init_repo_action = QAction("创建/初始化本地仓库...", self)
         self.init_repo_action.triggered.connect(self.init_repository)
-        self.clone_repo_action = QAction("克隆仓库", self)
+        self.clone_repo_action = QAction("Clone 远程仓库...", self)
         self.clone_repo_action.triggered.connect(self.clone_repository)
-        self.refresh_action = QAction("刷新", self)
+        self.refresh_action = QAction("刷新全部", self)
         self.refresh_action.triggered.connect(self.refresh_all)
         self.copy_command_action = QAction("复制最后命令", self)
         self.copy_command_action.triggered.connect(self.copy_last_command)
 
-        menu = self.menuBar().addMenu("文件")
-        menu.addAction(self.open_repo_action)
-        menu.addAction(self.init_repo_action)
-        menu.addAction(self.clone_repo_action)
-        menu.addSeparator()
-        menu.addAction(self.refresh_action)
+        file_menu = self.menuBar().addMenu("文件")
+        file_menu.addAction(self.open_repo_action)
+        file_menu.addAction(self.init_repo_action)
+        file_menu.addAction(self.clone_repo_action)
+        file_menu.addAction("创建 GitHub 远程仓库...", self.create_remote_repository)
+        file_menu.addSeparator()
+        file_menu.addAction(self.refresh_action)
+        file_menu.addSeparator()
+        file_menu.addAction("退出", self.close)
 
-        tools = self.menuBar().addMenu("工具")
-        tools.addAction(self.copy_command_action)
-        tools.addAction("打开原生终端命令示例", self.show_terminal_help)
+        repo_menu = self.menuBar().addMenu("仓库")
+        repo_menu.addAction("Status -sb", lambda: self.run_git_command(["status", "-sb"], callback=lambda _: self.refresh_all()))
+        repo_menu.addAction("打开 Raw Git 终端", lambda: self.set_bottom_panel_visible(True))
+        repo_menu.addAction("查看配置", lambda: self.run_git_command(["config", "--list", "--show-origin"], callback=self.show_result_in_log))
+        repo_menu.addAction("设置 user.name...", self.set_git_user_name)
+        repo_menu.addAction("设置 user.email...", self.set_git_user_email)
+        repo_menu.addAction("刷新仓库状态", self.refresh_all)
+
+        changes_menu = self.menuBar().addMenu("更改")
+        changes_menu.addAction("Stage All", lambda: self.run_git_command(["add", "-A"], callback=lambda _: self.refresh_all()))
+        changes_menu.addAction("Unstage All", lambda: self.run_git_command(["restore", "--staged", "."], callback=lambda _: self.refresh_all()))
+        changes_menu.addAction("Commit...", self.commit_changes)
+        changes_menu.addAction("Amend --no-edit", lambda: self.run_git_command(["commit", "--amend", "--no-edit"], callback=lambda _: self.refresh_all()))
+        changes_menu.addAction("Diff", lambda: self.run_git_command(["diff"], callback=self.show_result_in_log))
+        changes_menu.addAction("Diff --staged", lambda: self.run_git_command(["diff", "--staged"], callback=self.show_result_in_log))
+        changes_menu.addAction("Clean -fd", lambda: self.run_git_command(["clean", "-fd"], callback=lambda _: self.refresh_all()))
+
+        branch_menu = self.menuBar().addMenu("分支")
+        branch_menu.addAction("创建分支...", self.create_branch_from_menu)
+        branch_menu.addAction("切换分支...", self.switch_branch_from_menu)
+        branch_menu.addAction("分支列表", lambda: self.tabs.setCurrentIndex(2) if hasattr(self, "tabs") else None)
+        branch_menu.addAction("Fetch 后刷新图", lambda: self.run_git_command(["fetch", "--all", "--prune"], callback=lambda _: self.refresh_all(), timeout=300))
+        branch_menu.addAction("Merge...", self.merge_branch_from_menu)
+        branch_menu.addAction("Rebase...", self.rebase_branch_from_menu)
+        branch_menu.addAction("Reflog", lambda: self.run_git_command(["reflog", "--date=iso"], callback=self.show_result_in_log))
+
+        remote_menu = self.menuBar().addMenu("远程")
+        remote_menu.addAction("Remote -v", lambda: self.run_git_command(["remote", "-v"], callback=self.show_result_in_log))
+        remote_menu.addAction("添加 Remote...", self.add_remote)
+        remote_menu.addAction("设置 Remote URL...", self.set_remote_url)
+        remote_menu.addSeparator()
+        remote_menu.addAction("Fetch", lambda: self.run_git_command(["fetch"], callback=lambda _: self.refresh_all(), timeout=300))
+        remote_menu.addAction("Fetch --all --prune", lambda: self.run_git_command(["fetch", "--all", "--prune"], callback=lambda _: self.refresh_all(), timeout=300))
+        remote_menu.addAction("Pull", lambda: self.run_git_command(["pull"], callback=lambda _: self.refresh_all(), timeout=300))
+        remote_menu.addAction("Pull --ff-only", lambda: self.run_git_command(["pull", "--ff-only"], callback=lambda _: self.refresh_all(), timeout=300))
+        remote_menu.addAction("Pull --rebase", lambda: self.run_git_command(["pull", "--rebase"], callback=lambda _: self.refresh_all(), timeout=300))
+        remote_menu.addAction("Push", lambda: self.run_git_command(["push"], callback=lambda _: self.refresh_all(), timeout=300))
+        remote_menu.addAction("Push -u...", self.push_current_branch_upstream_from_menu)
+        remote_menu.addAction("Push --tags", lambda: self.run_git_command(["push", "--tags"], callback=lambda _: self.refresh_all(), timeout=300))
+        remote_menu.addAction("删除远程分支...", self.delete_remote_branch)
+
+        tag_stash_menu = self.menuBar().addMenu("标签/Stash")
+        tag_stash_menu.addAction("创建标签...", self.create_tag_from_menu)
+        tag_stash_menu.addAction("Push --tags", lambda: self.run_git_command(["push", "--tags"], callback=lambda _: self.refresh_all(), timeout=300))
+        tag_stash_menu.addAction("Stash Push -u", self.stash_push)
+        tag_stash_menu.addAction("Stash List", lambda: self.run_git_command(["stash", "list"], callback=self.show_result_in_log))
+        tag_stash_menu.addAction("Stash Pop Selected", self.stash_pop)
+
+        advanced_menu = self.menuBar().addMenu("高级")
+        advanced_menu.addAction("全部 Git 命令", lambda: self.tabs.setCurrentIndex(7) if hasattr(self, "tabs") else None)
+        advanced_menu.addAction("Object Inspector", lambda: self.tabs.setCurrentIndex(6) if hasattr(self, "tabs") else None)
+        advanced_menu.addAction("fsck --full", lambda: self.run_git_command(["fsck", "--full"], callback=self.show_result_in_log, timeout=300))
+        advanced_menu.addAction("gc", lambda: self.run_git_command(["gc"], callback=self.show_result_in_log, timeout=300))
+        advanced_menu.addAction("count-objects -vH", lambda: self.run_git_command(["count-objects", "-vH"], callback=self.show_result_in_log))
+        advanced_menu.addAction("复制最后命令", self.copy_last_command)
+
+        view_menu = self.menuBar().addMenu("视图")
+        view_menu.addAction("显示/隐藏左侧栏", self.toggle_left_sidebar)
+        view_menu.addAction("显示/隐藏右侧栏", self.toggle_right_sidebar)
+        view_menu.addAction("显示/隐藏底部栏", self.toggle_bottom_panel)
+        view_menu.addSeparator()
+        view_menu.addAction("工作区", lambda: self.tabs.setCurrentIndex(0) if hasattr(self, "tabs") else None)
+        view_menu.addAction("历史", lambda: self.tabs.setCurrentIndex(1) if hasattr(self, "tabs") else None)
+        view_menu.addAction("分支", lambda: self.tabs.setCurrentIndex(2) if hasattr(self, "tabs") else None)
+        view_menu.addAction("远程", lambda: self.tabs.setCurrentIndex(3) if hasattr(self, "tabs") else None)
 
         appearance_menu = self.menuBar().addMenu("外观")
+        self._build_theme_menu(appearance_menu)
+
+        platform_menu = self.menuBar().addMenu("平台")
+        platform_menu.addAction("GitHub auth status", lambda: self.run_external_command(["gh", "auth", "status"]))
+        platform_menu.addAction("GitHub repo list", lambda: self.run_external_command(["gh", "repo", "list", "--limit", "50"]))
+        platform_menu.addAction("GitHub create repo...", self.create_remote_repository)
+        platform_menu.addAction("GitLab auth status", lambda: self.run_external_command(["glab", "auth", "status"]))
+
+        help_menu = self.menuBar().addMenu("帮助")
+        help_menu.addAction("快捷键", self.show_shortcuts)
+        help_menu.addAction("原生命令示例", self.show_terminal_help)
+        help_menu.addAction("关于 Git Terminal", self.show_about)
+
+        # The uploaded template uses its own top command bar as the visible menu.
+        # Hide the native menu bar so no blank row remains above the template.
+        native_menu = self.menuBar()
+        native_menu.clear()
+        native_menu.setNativeMenuBar(False)
+        native_menu.setMinimumHeight(0)
+        native_menu.setMaximumHeight(0)
+        native_menu.setFixedHeight(0)
+        native_menu.hide()
+        zero_menu = QWidget(self)
+        zero_menu.setObjectName("nativeMenuSpacer")
+        zero_menu.setFixedHeight(0)
+        zero_menu.setMinimumHeight(0)
+        zero_menu.setMaximumHeight(0)
+        self.setMenuWidget(zero_menu)
+
+    def _build_theme_menu(self, appearance_menu) -> None:
         mode_group = QActionGroup(self)
         mode_group.setExclusive(True)
         self.dark_theme_action = QAction("深色模式", self)
         self.dark_theme_action.setCheckable(True)
         self.light_theme_action = QAction("浅色模式", self)
         self.light_theme_action.setCheckable(True)
-        self.dark_theme_action.setChecked(True)
+        self.dark_theme_action.setChecked(self.theme_mode == "dark")
+        self.light_theme_action.setChecked(self.theme_mode == "light")
         mode_group.addAction(self.dark_theme_action)
         mode_group.addAction(self.light_theme_action)
         self.dark_theme_action.triggered.connect(lambda: self.change_theme_mode("dark"))
         self.light_theme_action.triggered.connect(lambda: self.change_theme_mode("light"))
         appearance_menu.addAction(self.dark_theme_action)
         appearance_menu.addAction(self.light_theme_action)
-
         accent_menu = appearance_menu.addMenu("配色")
         accent_group = QActionGroup(self)
         accent_group.setExclusive(True)
-        self.accent_actions = {}
+        self.accent_actions = getattr(self, "accent_actions", {})
         for accent_key, label in [("blue", "蓝色"), ("purple", "紫色"), ("green", "绿色"), ("orange", "橙色")]:
             action = QAction(label, self)
             action.setCheckable(True)
-            if accent_key == "blue":
-                action.setChecked(True)
+            action.setChecked(self.theme_accent == accent_key)
             action.triggered.connect(lambda _=False, key=accent_key: self.change_theme_accent(key))
             accent_group.addAction(action)
             accent_menu.addAction(action)
             self.accent_actions[accent_key] = action
-
-        help_menu = self.menuBar().addMenu("帮助")
-        help_menu.addAction("快捷键", self.show_shortcuts)
-        help_menu.addAction("关于 Git Terminal", self.show_about)
-
-        # Keep the uploaded VS Code-style template clean: no extra top toolbar.
-        # The same actions remain available from the menu, the top command bar,
-        # the left side panel header, and the terminal command input.
 
     def _build_ui(self) -> None:
         # Use the uploaded VS Code-style template layout without changing its
@@ -203,6 +290,7 @@ class MainWindow(QMainWindow):
         root_layout.setSpacing(0)
 
         self.top_bar = TopCommandBar()
+        self._build_visible_top_menus()
         root_layout.addWidget(self.top_bar)
 
         content = QWidget()
@@ -236,6 +324,8 @@ class MainWindow(QMainWindow):
         self.center_splitter.setMinimumWidth(120)
 
         workspace = QWidget()
+        self.workspace_container = workspace
+        workspace.setMinimumHeight(280)
         workspace_layout = QVBoxLayout(workspace)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(0)
@@ -250,6 +340,7 @@ class MainWindow(QMainWindow):
         self.tabs.setMovable(True)
         self.tabs.setUsesScrollButtons(True)
         self.tabs.tabBar().setExpanding(False)
+        self.tabs.tabBar().hide()
         self.tabs.setMinimumWidth(80)
         self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         workspace_layout.addWidget(self.tabs, 1)
@@ -257,23 +348,15 @@ class MainWindow(QMainWindow):
         self.bottom_panel = BottomPanel()
         self.bottom_panel.set_hide_callback(lambda: self.set_bottom_panel_visible(False))
         self._build_log_bar()
-        self.bottom_panel.tabs.addTab(self.log_bar, "TERMINAL")
-        self.problems_list = QListWidget()
-        self.problems_list.addItem("✓ Git Terminal ready.")
-        self.problems_list.addItem("ℹ Open a repository to inspect status.")
-        self.bottom_panel.tabs.addTab(self.problems_list, "PROBLEMS")
-        self.output_panel = QPlainTextEdit()
-        self.output_panel.setObjectName("terminalOutput")
-        self.output_panel.setReadOnly(True)
-        self.output_panel.setPlainText("[Git Terminal] Output panel initialized.")
-        self.bottom_panel.tabs.addTab(self.output_panel, "OUTPUT")
-        self.debug_panel = QListWidget()
-        self.debug_panel.addItems(["Command history", "Safety guard", "Recovery hints"])
-        self.bottom_panel.tabs.addTab(self.debug_panel, "DEBUG CONSOLE")
+        # Bottom panel follows the uploaded template area but is now terminal-only:
+        # no useless bottom tab strip, no hidden placeholder panels.
+        self.bottom_panel.body_layout.addWidget(self.log_bar)
 
         self.center_splitter.addWidget(workspace)
         self.center_splitter.addWidget(self.bottom_panel)
-        self.center_splitter.setSizes([570, 210])
+        self.center_splitter.setStretchFactor(0, 3)
+        self.center_splitter.setStretchFactor(1, 1)
+        self.center_splitter.setSizes([520, 180])
 
         self.right_sidebar = SidePanel("CONTEXT", side="right", min_size=220)
         self.right_sidebar.set_collapse_callback(lambda: self.set_right_sidebar_visible(False))
@@ -303,7 +386,7 @@ class MainWindow(QMainWindow):
         self.horizontal_splitter.addWidget(self.left_sidebar)
         self.horizontal_splitter.addWidget(self.center_splitter)
         self.horizontal_splitter.addWidget(self.right_sidebar)
-        self.horizontal_splitter.setSizes([270, 840, 270])
+        self.horizontal_splitter.setSizes([230, 720, 230])
 
         content_layout.addWidget(self.horizontal_splitter)
         root_layout.addWidget(content, 1)
@@ -315,9 +398,20 @@ class MainWindow(QMainWindow):
         self.top_bar.refresh_button.clicked.connect(self.refresh_all)
         self.top_bar.command_center.returnPressed.connect(self.run_command_center)
 
-        activity_targets = [0, 0, 2, 3, 6]
+        activity_handlers = [
+            lambda _checked=False: (self.tabs.setCurrentIndex(0), self.refresh_worktree()),
+            lambda _checked=False: (self.tabs.setCurrentIndex(1), self.refresh_history(all_branches=True)),
+            lambda _checked=False: (self.tabs.setCurrentIndex(2), self.refresh_branch_graph()),
+            lambda _checked=False: (self.tabs.setCurrentIndex(3), self.refresh_remotes()),
+            lambda _checked=False: (self.tabs.setCurrentIndex(4), self.refresh_tags_stash()),
+            lambda _checked=False: self.tabs.setCurrentIndex(6),
+            lambda _checked=False: self.tabs.setCurrentIndex(8),
+            lambda _checked=False: (self.set_bottom_panel_visible(True), self.raw_command.setFocus()),
+            lambda _checked=False: self.show_shortcuts(),
+        ]
         for index, button in enumerate(self.activity_bar.buttons):
-            button.clicked.connect(lambda _checked, i=index: self.activate_activity_tab(i, activity_targets[i]))
+            button.clicked.connect(activity_handlers[index])
+        self.activity_bar.settings_button.clicked.connect(self.show_settings_menu)
 
         self._build_workspace_tab()
         self._build_history_tab()
@@ -330,6 +424,110 @@ class MainWindow(QMainWindow):
         self._build_platform_tab()
         self._compact_ui_controls()
 
+    def _build_visible_top_menus(self) -> None:
+        """Render full Git menus inside the template top bar.
+
+        This is separate from the native QMenuBar, because users expect the
+        template's top row itself to expose repository operations.
+        """
+        def add_button(title: str, entries: list[tuple[str, object] | None]) -> None:
+            button = QToolButton()
+            button.setObjectName("topMenuButton")
+            button.setText(title)
+            button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            menu = QMenu(button)
+            for entry in entries:
+                if entry is None:
+                    menu.addSeparator()
+                    continue
+                label, callback = entry
+                menu.addAction(label, callback)
+            button.setMenu(menu)
+            self.top_bar.menu_layout.addWidget(button)
+
+        add_button("文件", [
+            ("打开本地仓库...", self.open_repository),
+            ("创建/初始化本地仓库...", self.init_repository),
+            ("Clone 远程仓库...", self.clone_repository),
+            ("创建 GitHub 远程仓库...", self.create_remote_repository),
+            None,
+            ("刷新全部", self.refresh_all),
+        ])
+        add_button("仓库", [
+            ("Status -sb", lambda: self.run_git_command(["status", "-sb"], callback=lambda _: self.refresh_all())),
+            ("查看配置", lambda: self.run_git_command(["config", "--list", "--show-origin"], callback=self.show_result_in_log)),
+            ("设置 user.name...", self.set_git_user_name),
+            ("设置 user.email...", self.set_git_user_email),
+        ])
+        add_button("更改", [
+            ("Stage All", lambda: self.run_git_command(["add", "-A"], callback=lambda _: self.refresh_all())),
+            ("Unstage All", lambda: self.run_git_command(["restore", "--staged", "."], callback=lambda _: self.refresh_all())),
+            ("Commit...", self.commit_changes),
+            ("Diff", lambda: self.run_git_command(["diff"], callback=self.show_result_in_log)),
+            ("Diff --staged", lambda: self.run_git_command(["diff", "--staged"], callback=self.show_result_in_log)),
+        ])
+        add_button("分支", [
+            ("创建分支...", self.create_branch_from_menu),
+            ("切换分支...", self.switch_branch_from_menu),
+            ("Merge...", self.merge_branch_from_menu),
+            ("Rebase...", self.rebase_branch_from_menu),
+            ("打开分支页", lambda: self.tabs.setCurrentIndex(2) if hasattr(self, "tabs") else None),
+            ("Reflog", lambda: self.run_git_command(["reflog", "--date=iso"], callback=self.show_result_in_log)),
+        ])
+        add_button("远程", [
+            ("Remote -v", lambda: self.run_git_command(["remote", "-v"], callback=self.show_result_in_log)),
+            ("添加 Remote...", self.add_remote),
+            ("Fetch", lambda: self.run_git_command(["fetch"], callback=lambda _: self.refresh_all(), timeout=300)),
+            ("Fetch --all --prune", lambda: self.run_git_command(["fetch", "--all", "--prune"], callback=lambda _: self.refresh_all(), timeout=300)),
+            ("Pull", lambda: self.run_git_command(["pull"], callback=lambda _: self.refresh_all(), timeout=300)),
+            ("Pull --ff-only", lambda: self.run_git_command(["pull", "--ff-only"], callback=lambda _: self.refresh_all(), timeout=300)),
+            ("Pull --rebase", lambda: self.run_git_command(["pull", "--rebase"], callback=lambda _: self.refresh_all(), timeout=300)),
+            ("Push", lambda: self.run_git_command(["push"], callback=lambda _: self.refresh_all(), timeout=300)),
+            ("Push -u...", self.push_current_branch_upstream_from_menu),
+            ("Push --tags", lambda: self.run_git_command(["push", "--tags"], callback=lambda _: self.refresh_all(), timeout=300)),
+            ("删除远程分支...", self.delete_remote_branch),
+        ])
+        add_button("标签", [
+            ("创建标签...", self.create_tag_from_menu),
+            ("Tag 列表", lambda: self.tabs.setCurrentIndex(4) if hasattr(self, "tabs") else None),
+            ("Push --tags", lambda: self.run_git_command(["push", "--tags"], callback=lambda _: self.refresh_all(), timeout=300)),
+            ("Stash Push -u", self.stash_push),
+            ("Stash List", lambda: self.run_git_command(["stash", "list"], callback=self.show_result_in_log)),
+            ("Stash Pop Selected", self.stash_pop),
+        ])
+        add_button("高级", [
+            ("全部 Git 命令", lambda: self.tabs.setCurrentIndex(7) if hasattr(self, "tabs") else None),
+            ("Object Inspector", lambda: self.tabs.setCurrentIndex(6) if hasattr(self, "tabs") else None),
+            ("Cherry-pick...", self.cherry_pick_from_menu),
+            ("Revert...", self.revert_from_menu),
+            ("Reset --hard...", self.reset_hard_from_menu),
+            None,
+            ("Worktree List", lambda: self.run_git_command(["worktree", "list"], callback=self.show_result_in_log)),
+            ("Submodule Status", lambda: self.run_git_command(["submodule", "status", "--recursive"], callback=self.show_result_in_log, timeout=300)),
+            ("LFS Status", lambda: self.run_git_command(["lfs", "status"], callback=self.show_result_in_log, timeout=300)),
+            ("fsck --full", lambda: self.run_git_command(["fsck", "--full"], callback=self.show_result_in_log, timeout=300)),
+            ("gc", lambda: self.run_git_command(["gc"], callback=self.show_result_in_log, timeout=300)),
+            ("count-objects -vH", lambda: self.run_git_command(["count-objects", "-vH"], callback=self.show_result_in_log)),
+        ])
+        add_button("平台", [
+            ("GitHub auth status", lambda: self.run_external_command(["gh", "auth", "status"])),
+            ("GitHub repo list", lambda: self.run_external_command(["gh", "repo", "list", "--limit", "50"])),
+            ("GitHub create repo...", self.create_remote_repository),
+            ("GitLab auth status", lambda: self.run_external_command(["glab", "auth", "status"])),
+            ("打开平台页", lambda: self.tabs.setCurrentIndex(8) if hasattr(self, "tabs") else None),
+        ])
+        add_button("视图", [
+            ("显示/隐藏左侧栏", self.toggle_left_sidebar),
+            ("显示/隐藏右侧栏", self.toggle_right_sidebar),
+            ("显示/隐藏底部终端", self.toggle_bottom_panel),
+            None,
+            ("工作区", lambda: self.tabs.setCurrentIndex(0) if hasattr(self, "tabs") else None),
+            ("历史", lambda: self.tabs.setCurrentIndex(1) if hasattr(self, "tabs") else None),
+            ("分支", lambda: self.tabs.setCurrentIndex(2) if hasattr(self, "tabs") else None),
+            ("远程", lambda: self.tabs.setCurrentIndex(3) if hasattr(self, "tabs") else None),
+        ])
+
     def activate_activity_tab(self, index: int, tab_index: int) -> None:
         self.set_left_sidebar_visible(True)
         if 0 <= tab_index < self.tabs.count():
@@ -339,19 +537,21 @@ class MainWindow(QMainWindow):
         self.left_sidebar.setVisible(visible)
         self.top_bar.left_sidebar_button.setChecked(visible)
         if visible:
-            self.horizontal_splitter.setSizes([270, 840, 270 if self.right_sidebar.isVisible() else 0])
+            self.horizontal_splitter.setSizes([230, 720, 230 if self.right_sidebar.isVisible() else 0])
 
     def set_right_sidebar_visible(self, visible: bool) -> None:
         self.right_sidebar.setVisible(visible)
         self.top_bar.right_sidebar_button.setChecked(visible)
         if visible:
-            self.horizontal_splitter.setSizes([270 if self.left_sidebar.isVisible() else 0, 840, 270])
+            self.horizontal_splitter.setSizes([230 if self.left_sidebar.isVisible() else 0, 720, 230])
 
     def set_bottom_panel_visible(self, visible: bool) -> None:
+        if not visible and getattr(self, "_bottom_maximized", False):
+            self.restore_bottom_panel()
         self.bottom_panel.setVisible(visible)
         self.top_bar.bottom_panel_button.setChecked(visible)
-        if visible:
-            self.center_splitter.setSizes([570, 210])
+        if visible and not getattr(self, "_bottom_maximized", False):
+            self.center_splitter.setSizes([520, 180])
 
     def toggle_left_sidebar(self) -> None:
         self.set_left_sidebar_visible(not self.left_sidebar.isVisible())
@@ -361,6 +561,35 @@ class MainWindow(QMainWindow):
 
     def toggle_bottom_panel(self) -> None:
         self.set_bottom_panel_visible(not self.bottom_panel.isVisible())
+
+    def toggle_bottom_maximized(self) -> None:
+        if getattr(self, "_bottom_maximized", False):
+            self.restore_bottom_panel()
+        else:
+            self.maximize_bottom_panel()
+
+    def maximize_bottom_panel(self) -> None:
+        self._bottom_maximized = True
+        self._last_center_sizes = self.center_splitter.sizes()
+        self.bottom_panel.setVisible(True)
+        self.top_bar.bottom_panel_button.setChecked(True)
+        if hasattr(self, "workspace_container"):
+            self.workspace_container.setVisible(False)
+        if hasattr(self, "terminal_max_btn"):
+            self.terminal_max_btn.setText("▢")
+            self.terminal_max_btn.setToolTip("恢复工作区 + 底部终端布局")
+
+    def restore_bottom_panel(self) -> None:
+        self._bottom_maximized = False
+        if hasattr(self, "workspace_container"):
+            self.workspace_container.setVisible(True)
+        sizes = getattr(self, "_last_center_sizes", None) or [520, 180]
+        if sum(sizes) <= 0:
+            sizes = [520, 180]
+        self.center_splitter.setSizes(sizes)
+        if hasattr(self, "terminal_max_btn"):
+            self.terminal_max_btn.setText("▣")
+            self.terminal_max_btn.setToolTip("展开终端占领整个工作区域 / Restore")
 
     def run_command_center(self) -> None:
         text = self.top_bar.command_center.text().strip()
@@ -379,8 +608,170 @@ class MainWindow(QMainWindow):
             self.raw_command.setText(text)
             self.run_raw_command()
         else:
-            self.raw_command.setText(text if text.startswith(":") else ":git " + text)
+            self.raw_command.setText(text)
             self.run_raw_command()
+
+    def show_settings_menu(self) -> None:
+        menu = QMenu(self)
+        theme_menu = menu.addMenu("主题")
+        dark = theme_menu.addAction("深色模式")
+        light = theme_menu.addAction("浅色模式")
+        dark.triggered.connect(lambda: self.change_theme_mode("dark"))
+        light.triggered.connect(lambda: self.change_theme_mode("light"))
+        accent_menu = menu.addMenu("配色")
+        for key, label in [("blue", "蓝色"), ("purple", "紫色"), ("green", "绿色"), ("orange", "橙色")]:
+            accent_menu.addAction(label, lambda _checked=False, k=key: self.change_theme_accent(k))
+        menu.addSeparator()
+        menu.addAction("显示左侧栏", lambda: self.set_left_sidebar_visible(True))
+        menu.addAction("显示右侧栏", lambda: self.set_right_sidebar_visible(True))
+        menu.addAction("显示底部栏", lambda: self.set_bottom_panel_visible(True))
+        menu.addSeparator()
+        menu.addAction("关于 Git Terminal", self.show_about)
+        button = getattr(self.activity_bar, "settings_button", None)
+        if button is not None:
+            menu_size = menu.sizeHint()
+            app_bottom = self.mapToGlobal(self.rect().bottomLeft()).y()
+            anchor = button.mapToGlobal(button.rect().topRight())
+            x = anchor.x()
+            y = max(self.mapToGlobal(self.rect().topLeft()).y(), app_bottom - menu_size.height())
+            menu.exec(QPoint(x, y))
+        else:
+            menu.exec(self.mapToGlobal(self.rect().center()))
+
+    def request_terminal_text(
+        self,
+        title: str,
+        message: str,
+        callback: Callable[[str], None],
+        default: str = "",
+        password: bool = False,
+    ) -> None:
+        self.set_bottom_panel_visible(True)
+        if hasattr(self, "terminal_prompt_panel"):
+            self.terminal_prompt_callback = callback
+            self.terminal_prompt_title.setText(title)
+            self.terminal_prompt_message.setText(message)
+            self.terminal_prompt_input.setText(default)
+            self.terminal_prompt_input.setEchoMode(QLineEdit.EchoMode.Password if password else QLineEdit.EchoMode.Normal)
+            self.terminal_prompt_panel.setVisible(True)
+            self.terminal_prompt_input.setFocus()
+            self.terminal_prompt_input.selectAll()
+        else:
+            # Fallback only for incomplete initialization.
+            callback(default)
+
+    def _submit_terminal_prompt(self) -> None:
+        value = self.terminal_prompt_input.text()
+        callback = getattr(self, "terminal_prompt_callback", None)
+        self.terminal_prompt_panel.setVisible(False)
+        self.terminal_prompt_input.clear()
+        self.terminal_prompt_callback = None
+        if callback:
+            callback(value)
+
+    def _cancel_terminal_prompt(self) -> None:
+        self.terminal_prompt_panel.setVisible(False)
+        self.terminal_prompt_input.clear()
+        self.terminal_prompt_callback = None
+        self.append_log("已取消输入。")
+
+    def create_remote_repository(self) -> None:
+        def got_name(name: str) -> None:
+            name = name.strip()
+            if not name:
+                return
+            def got_visibility(value: str) -> None:
+                visibility = value.strip().lower() or "private"
+                if visibility not in {"private", "public"}:
+                    self.append_log("仓库可见性只能输入 private 或 public。")
+                    return
+                self.run_external_command(["gh", "repo", "create", name, f"--{visibility}", "--source", ".", "--remote", "origin"])
+            self.request_terminal_text("创建 GitHub 远程仓库", "Visibility：输入 private 或 public", got_visibility, "private")
+        self.request_terminal_text("创建 GitHub 远程仓库", "仓库名（需要已安装并登录 gh CLI）：", got_name)
+
+    def set_git_user_name(self) -> None:
+        self.request_terminal_text(
+            "Git user.name",
+            "user.name：",
+            lambda name: self.run_git_command(["config", "--global", "user.name", name.strip()], callback=lambda _: self.refresh_all()) if name.strip() else None,
+        )
+
+    def set_git_user_email(self) -> None:
+        self.request_terminal_text(
+            "Git user.email",
+            "user.email：",
+            lambda email: self.run_git_command(["config", "--global", "user.email", email.strip()], callback=lambda _: self.refresh_all()) if email.strip() else None,
+        )
+
+    def create_branch_from_menu(self) -> None:
+        self.request_terminal_text(
+            "创建分支",
+            "分支名：",
+            lambda name: self.run_git_command(["branch", name.strip()], callback=lambda _: self.refresh_all()) if name.strip() else None,
+        )
+
+    def switch_branch_from_menu(self) -> None:
+        self.request_terminal_text(
+            "切换分支",
+            "分支名：",
+            lambda name: self.run_git_command(["switch", name.strip()], callback=lambda _: self.refresh_all()) if name.strip() else None,
+        )
+
+    def merge_branch_from_menu(self) -> None:
+        self.request_terminal_text(
+            "Merge",
+            "要合并到当前分支的分支名：",
+            lambda name: self.run_git_command(["merge", name.strip()], callback=lambda _: self.refresh_all()) if name.strip() else None,
+        )
+
+    def rebase_branch_from_menu(self) -> None:
+        self.request_terminal_text(
+            "Rebase",
+            "当前分支 rebase 到：",
+            lambda name: self.run_git_command(["rebase", name.strip()], callback=lambda _: self.refresh_all()) if name.strip() else None,
+        )
+
+    def cherry_pick_from_menu(self) -> None:
+        self.request_terminal_text(
+            "Cherry-pick",
+            "commit hash / ref：",
+            lambda commit: self.run_git_command(["cherry-pick", commit.strip()], callback=lambda _: self.refresh_all()) if commit.strip() else None,
+        )
+
+    def revert_from_menu(self) -> None:
+        self.request_terminal_text(
+            "Revert",
+            "commit hash / ref：",
+            lambda commit: self.run_git_command(["revert", commit.strip()], callback=lambda _: self.refresh_all()) if commit.strip() else None,
+        )
+
+    def reset_hard_from_menu(self) -> None:
+        self.request_terminal_text(
+            "Reset --hard",
+            "目标 commit / ref：",
+            lambda target: self.run_git_command(["reset", "--hard", target.strip()], callback=lambda _: self.refresh_all()) if target.strip() else None,
+        )
+
+    def push_current_branch_upstream_from_menu(self) -> None:
+        def got_remote(remote: str) -> None:
+            remote = remote.strip() or "origin"
+            branch = self.runner.run(["branch", "--show-current"]).stdout.strip()
+            if branch:
+                self.run_git_command(["push", "-u", remote, branch], callback=lambda _: self.refresh_all(), timeout=300)
+            else:
+                self.request_terminal_text(
+                    "Push -u",
+                    "当前分支名：",
+                    lambda name: self.run_git_command(["push", "-u", remote, name.strip()], callback=lambda _: self.refresh_all(), timeout=300) if name.strip() else None,
+                )
+        self.request_terminal_text("Push -u", "remote：", got_remote, "origin")
+
+    def create_tag_from_menu(self) -> None:
+        self.request_terminal_text(
+            "创建标签",
+            "标签名：",
+            lambda tag: self.run_git_command(["tag", "-a", tag.strip(), "-m", tag.strip()], callback=lambda _: self.refresh_all()) if tag.strip() else None,
+        )
 
     def _populate_navigator(self) -> None:
         groups = {
@@ -412,8 +803,11 @@ class MainWindow(QMainWindow):
             lists.addWidget(box)
         layout.addWidget(lists, 2)
 
-        btns = QHBoxLayout()
-        for text, handler in [
+        btns = QGridLayout()
+        btns.setContentsMargins(0, 0, 0, 0)
+        btns.setHorizontalSpacing(6)
+        btns.setVerticalSpacing(4)
+        for index, (text, handler) in enumerate([
             ("Stage Selected", self.stage_selected),
             ("Unstage Selected", self.unstage_selected),
             ("Stage All", lambda: self.run_git_command(["add", "-A"], callback=lambda _: self.refresh_all())),
@@ -422,10 +816,10 @@ class MainWindow(QMainWindow):
             ("Clean Untracked", self.clean_selected_untracked),
             ("Diff", self.show_selected_diff),
             ("Refresh", self.refresh_all),
-        ]:
+        ]):
             button = QPushButton(text)
             button.clicked.connect(handler)
-            btns.addWidget(button)
+            btns.addWidget(button, index // 4, index % 4)
         layout.addLayout(btns)
 
         self.diff_view = QPlainTextEdit()
@@ -462,8 +856,10 @@ class MainWindow(QMainWindow):
         self.history_tree.customContextMenuRequested.connect(self._commit_context_menu)
         self.history_tree.itemClicked.connect(self.show_commit_details)
         layout.addWidget(self.history_tree, 3)
-        buttons = QHBoxLayout()
-        for text, handler in [
+        buttons = QGridLayout()
+        buttons.setHorizontalSpacing(6)
+        buttons.setVerticalSpacing(4)
+        for index, (text, handler) in enumerate([
             ("Log Current", lambda: self.refresh_history(all_branches=False)),
             ("Log --all", lambda: self.refresh_history(all_branches=True)),
             ("Show Commit", self.show_commit_details),
@@ -472,10 +868,10 @@ class MainWindow(QMainWindow):
             ("Cherry-pick", self.cherry_pick_selected_commit),
             ("Revert", self.revert_selected_commit),
             ("Reset --hard Here", self.reset_hard_selected_commit),
-        ]:
+        ]):
             b = QPushButton(text)
             b.clicked.connect(handler)
-            buttons.addWidget(b)
+            buttons.addWidget(b, index // 4, index % 4)
         layout.addLayout(buttons)
         self.commit_detail = QPlainTextEdit()
         self.commit_detail.setReadOnly(True)
@@ -496,11 +892,13 @@ class MainWindow(QMainWindow):
         self.branch_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.branch_list.customContextMenuRequested.connect(self._branch_context_menu)
         list_layout.addWidget(self.branch_list, 1)
-        row = QHBoxLayout()
+        row = QGridLayout()
+        row.setHorizontalSpacing(6)
+        row.setVerticalSpacing(4)
         self.new_branch_name = QLineEdit()
         self.new_branch_name.setPlaceholderText("新分支名")
-        row.addWidget(self.new_branch_name)
-        for text, handler in [
+        row.addWidget(self.new_branch_name, 0, 0, 1, 2)
+        for index, (text, handler) in enumerate([
             ("Create", self.create_branch),
             ("Switch", self.switch_branch),
             ("Delete", self.delete_branch),
@@ -508,10 +906,10 @@ class MainWindow(QMainWindow):
             ("Rebase", self.rebase_onto_branch),
             ("Push -u", self.push_branch_upstream),
             ("Pull", lambda: self.run_git_command(["pull"], callback=lambda _: self.refresh_all(), timeout=300)),
-        ]:
+        ]):
             b = QPushButton(text)
             b.clicked.connect(handler)
-            row.addWidget(b)
+            row.addWidget(b, 1 + index // 4, index % 4)
         list_layout.addLayout(row)
         self.branch_view_tabs.addTab(list_page, "列表")
 
@@ -530,6 +928,7 @@ class MainWindow(QMainWindow):
         graph_layout.addLayout(graph_toolbar)
         graph_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.branch_graph_view = CommitGraphView()
+        self.branch_graph_view.set_theme(self.theme_mode)
         self.branch_graph_view.commitSelected.connect(self.graph_commit_selected)
         self.branch_graph_view.commitHovered.connect(self.graph_commit_selected)
         self.branch_graph_view.commitActivated.connect(self.graph_checkout_commit)
@@ -554,8 +953,10 @@ class MainWindow(QMainWindow):
         self.remote_tree.setColumnCount(3)
         self.remote_tree.setHeaderLabels(["Remote", "Type", "URL"])
         layout.addWidget(self.remote_tree, 1)
-        row = QHBoxLayout()
-        for text, handler in [
+        row = QGridLayout()
+        row.setHorizontalSpacing(6)
+        row.setVerticalSpacing(4)
+        for index, (text, handler) in enumerate([
             ("remote -v", self.refresh_remotes),
             ("Add", self.add_remote),
             ("Remove", self.remove_remote),
@@ -564,10 +965,10 @@ class MainWindow(QMainWindow):
             ("Fetch --prune", lambda: self.run_git_command(["fetch", "--all", "--prune"], callback=lambda _: self.refresh_all(), timeout=300)),
             ("Push", lambda: self.run_git_command(["push"], callback=lambda _: self.refresh_all(), timeout=300)),
             ("Delete Remote Branch", self.delete_remote_branch),
-        ]:
+        ]):
             b = QPushButton(text)
             b.clicked.connect(handler)
-            row.addWidget(b)
+            row.addWidget(b, index // 4, index % 4)
         layout.addLayout(row)
         self.remote_output = QPlainTextEdit()
         self.remote_output.setReadOnly(True)
@@ -585,16 +986,18 @@ class MainWindow(QMainWindow):
         self.new_tag_name = QLineEdit()
         self.new_tag_name.setPlaceholderText("v1.0.0")
         tag_layout.addWidget(self.new_tag_name)
-        tag_buttons = QHBoxLayout()
-        for text, handler in [
+        tag_buttons = QGridLayout()
+        tag_buttons.setHorizontalSpacing(6)
+        tag_buttons.setVerticalSpacing(4)
+        for index, (text, handler) in enumerate([
             ("Create", self.create_tag),
             ("Delete", self.delete_tag),
             ("Push", self.push_tag),
             ("Push --tags", lambda: self.run_git_command(["push", "--tags"], callback=lambda _: self.refresh_all(), timeout=300)),
-        ]:
+        ]):
             b = QPushButton(text)
             b.clicked.connect(handler)
-            tag_buttons.addWidget(b)
+            tag_buttons.addWidget(b, index // 2, index % 2)
         tag_layout.addLayout(tag_buttons)
         layout.addWidget(tag_box)
 
@@ -605,17 +1008,19 @@ class MainWindow(QMainWindow):
         self.stash_message = QLineEdit()
         self.stash_message.setPlaceholderText("stash message")
         stash_layout.addWidget(self.stash_message)
-        stash_buttons = QHBoxLayout()
-        for text, handler in [
+        stash_buttons = QGridLayout()
+        stash_buttons.setHorizontalSpacing(6)
+        stash_buttons.setVerticalSpacing(4)
+        for index, (text, handler) in enumerate([
             ("Push -u", self.stash_push),
             ("Apply", self.stash_apply),
             ("Pop", self.stash_pop),
             ("Drop", self.stash_drop),
             ("Clear", lambda: self.run_git_command(["stash", "clear"], callback=lambda _: self.refresh_all())),
-        ]:
+        ]):
             b = QPushButton(text)
             b.clicked.connect(handler)
-            stash_buttons.addWidget(b)
+            stash_buttons.addWidget(b, index // 3, index % 3)
         stash_layout.addLayout(stash_buttons)
         layout.addWidget(stash_box)
         self.tabs.addTab(page, "标签 / Stash")
@@ -625,8 +1030,10 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         self.conflict_list = QListWidget()
         layout.addWidget(self.conflict_list)
-        row = QHBoxLayout()
-        for text, handler in [
+        row = QGridLayout()
+        row.setHorizontalSpacing(6)
+        row.setVerticalSpacing(4)
+        for index, (text, handler) in enumerate([
             ("Use ours", lambda: self.checkout_conflict_side("--ours")),
             ("Use theirs", lambda: self.checkout_conflict_side("--theirs")),
             ("Mark resolved", self.mark_conflict_resolved),
@@ -637,10 +1044,10 @@ class MainWindow(QMainWindow):
             ("Rebase Abort", lambda: self.run_git_command(["rebase", "--abort"], callback=lambda _: self.refresh_all())),
             ("Cherry-pick Continue", lambda: self.run_git_command(["cherry-pick", "--continue"], callback=lambda _: self.refresh_all())),
             ("Cherry-pick Abort", lambda: self.run_git_command(["cherry-pick", "--abort"], callback=lambda _: self.refresh_all())),
-        ]:
+        ]):
             b = QPushButton(text)
             b.clicked.connect(handler)
-            row.addWidget(b)
+            row.addWidget(b, index // 5, index % 5)
         layout.addLayout(row)
         self.conflict_preview = QPlainTextEdit()
         self.conflict_preview.setReadOnly(True)
@@ -666,8 +1073,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(object_box)
 
         maintenance_box = QGroupBox("Repository Maintenance")
-        maintenance_layout = QHBoxLayout(maintenance_box)
-        for text, args in [
+        maintenance_layout = QGridLayout(maintenance_box)
+        maintenance_layout.setHorizontalSpacing(6)
+        maintenance_layout.setVerticalSpacing(4)
+        for index, (text, args) in enumerate([
             ("count-objects -vH", ["count-objects", "-vH"]),
             ("fsck --full", ["fsck", "--full"]),
             ("gc", ["gc"]),
@@ -675,24 +1084,26 @@ class MainWindow(QMainWindow):
             ("archive HEAD", ["archive", "--format=zip", "HEAD", "-o", "git-terminal-archive.zip"]),
             ("bundle --all", ["bundle", "create", "git-terminal.bundle", "--all"]),
             ("maintenance run", ["maintenance", "run"]),
-        ]:
+        ]):
             b = QPushButton(text)
             b.clicked.connect(lambda _, a=args: self.run_git_command(a, callback=self.show_result_in_log, timeout=300))
-            maintenance_layout.addWidget(b)
+            maintenance_layout.addWidget(b, index // 4, index % 4)
         layout.addWidget(maintenance_box)
 
         config_box = QGroupBox("Config / Hooks / LFS / Submodule 快捷入口")
-        config_layout = QHBoxLayout(config_box)
-        for text, args in [
+        config_layout = QGridLayout(config_box)
+        config_layout.setHorizontalSpacing(6)
+        config_layout.setVerticalSpacing(4)
+        for index, (text, args) in enumerate([
             ("config --list --show-origin", ["config", "--list", "--show-origin"]),
             ("submodule status", ["submodule", "status", "--recursive"]),
             ("lfs status", ["lfs", "status"]),
             ("hooks path", ["config", "--get", "core.hooksPath"]),
             ("ignored files", ["status", "--ignored", "-s"]),
-        ]:
+        ]):
             b = QPushButton(text)
             b.clicked.connect(lambda _, a=args: self.run_git_command(a, callback=self.show_result_in_log, timeout=300))
-            config_layout.addWidget(b)
+            config_layout.addWidget(b, index // 3, index % 3)
         layout.addWidget(config_box)
 
         self.advanced_output = QPlainTextEdit()
@@ -737,16 +1148,18 @@ class MainWindow(QMainWindow):
         examples_layout.addWidget(self.command_examples)
         layout.addWidget(examples_box)
 
-        row = QHBoxLayout()
-        for text, handler in [
+        row = QGridLayout()
+        row.setHorizontalSpacing(6)
+        row.setVerticalSpacing(4)
+        for index, (text, handler) in enumerate([
             ("Run", self.run_advanced_command),
             ("Copy", lambda: QApplication.clipboard().setText(self.command_preview.text())),
             ("Open Help", self.open_selected_command_help),
             ("Refresh git help -a", self.reload_command_catalog),
-        ]:
+        ]):
             b = QPushButton(text)
             b.clicked.connect(handler)
-            row.addWidget(b)
+            row.addWidget(b, index // 4, index % 4)
         layout.addLayout(row)
 
         self.all_commands_output = QPlainTextEdit()
@@ -765,8 +1178,10 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        row = QHBoxLayout()
-        for text, cmd in [
+        row = QGridLayout()
+        row.setHorizontalSpacing(6)
+        row.setVerticalSpacing(4)
+        for index, (text, cmd) in enumerate([
             ("gh auth status", ["gh", "auth", "status"]),
             ("gh repo list", ["gh", "repo", "list", "--limit", "50"]),
             ("gh pr list", ["gh", "pr", "list"]),
@@ -775,10 +1190,10 @@ class MainWindow(QMainWindow):
             ("glab auth status", ["glab", "auth", "status"]),
             ("glab mr list", ["glab", "mr", "list"]),
             ("glab issue list", ["glab", "issue", "list"]),
-        ]:
+        ]):
             b = QPushButton(text)
             b.clicked.connect(lambda _, c=cmd: self.run_external_command(c))
-            row.addWidget(b)
+            row.addWidget(b, index // 4, index % 4)
         layout.addLayout(row)
 
         gitee_box = QGroupBox("Gitee / 自定义平台 API 扩展点")
@@ -811,6 +1226,33 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        self.terminal_prompt_panel = QFrame()
+        self.terminal_prompt_panel.setObjectName("terminalPromptPanel")
+        self.terminal_prompt_panel.setVisible(False)
+        prompt_panel_layout = QGridLayout(self.terminal_prompt_panel)
+        prompt_panel_layout.setContentsMargins(10, 8, 10, 8)
+        prompt_panel_layout.setHorizontalSpacing(8)
+        prompt_panel_layout.setVerticalSpacing(6)
+        self.terminal_prompt_title = QLabel("")
+        self.terminal_prompt_title.setObjectName("terminalPromptTitle")
+        self.terminal_prompt_message = QLabel("")
+        self.terminal_prompt_message.setWordWrap(True)
+        self.terminal_prompt_input = QLineEdit()
+        self.terminal_prompt_input.setObjectName("terminalInput")
+        self.terminal_prompt_ok = QPushButton("OK")
+        self.terminal_prompt_ok.setObjectName("runButton")
+        self.terminal_prompt_cancel = QPushButton("Cancel")
+        self.terminal_prompt_cancel.setObjectName("panelAction")
+        self.terminal_prompt_input.returnPressed.connect(self._submit_terminal_prompt)
+        self.terminal_prompt_ok.clicked.connect(self._submit_terminal_prompt)
+        self.terminal_prompt_cancel.clicked.connect(self._cancel_terminal_prompt)
+        prompt_panel_layout.addWidget(self.terminal_prompt_title, 0, 0, 1, 4)
+        prompt_panel_layout.addWidget(self.terminal_prompt_message, 1, 0, 1, 4)
+        prompt_panel_layout.addWidget(self.terminal_prompt_input, 2, 0, 1, 2)
+        prompt_panel_layout.addWidget(self.terminal_prompt_ok, 2, 2)
+        prompt_panel_layout.addWidget(self.terminal_prompt_cancel, 2, 3)
+        layout.addWidget(self.terminal_prompt_panel)
+
         self.command_log = QPlainTextEdit()
         self.command_log.setObjectName("terminalOutput")
         self.command_log.setReadOnly(True)
@@ -824,21 +1266,31 @@ class MainWindow(QMainWindow):
         input_layout = QHBoxLayout(input_bar)
         input_layout.setContentsMargins(10, 6, 10, 8)
         input_layout.setSpacing(8)
-        prompt = QLabel("git >")
+        prompt = QLabel("$ >")
         prompt.setObjectName("terminalPrompt")
         self.raw_command = QLineEdit()
         self.raw_command.setObjectName("terminalInput")
-        self.raw_command.setPlaceholderText("输入 Git 命令后回车执行，例如：status -sb / git log --oneline")
+        self.raw_command.setPlaceholderText("输入任意命令，例如：git status -sb / python --version / dir / ls")
         self.raw_command.returnPressed.connect(self.run_raw_command)
         run_btn = QPushButton("Run")
         run_btn.setObjectName("runButton")
         run_btn.clicked.connect(self.run_raw_command)
+        self.terminal_max_btn = QPushButton("▣")
+        self.terminal_max_btn.setObjectName("panelAction")
+        self.terminal_max_btn.setToolTip("展开终端占领整个工作区域 / Restore")
+        self.terminal_max_btn.clicked.connect(self.toggle_bottom_maximized)
+        self.terminal_hide_btn = QPushButton("⌄")
+        self.terminal_hide_btn.setObjectName("panelAction")
+        self.terminal_hide_btn.setToolTip("收起底部终端")
+        self.terminal_hide_btn.clicked.connect(lambda: self.set_bottom_panel_visible(False))
         clear_btn = QPushButton("Clear")
         clear_btn.setObjectName("panelAction")
         clear_btn.clicked.connect(lambda: self.command_log.clear())
         input_layout.addWidget(prompt)
         input_layout.addWidget(self.raw_command, 1)
         input_layout.addWidget(run_btn)
+        input_layout.addWidget(self.terminal_max_btn)
+        input_layout.addWidget(self.terminal_hide_btn)
         input_layout.addWidget(clear_btn)
         layout.addWidget(input_bar)
 
@@ -881,12 +1333,18 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, self, self.theme_mode, self.theme_accent)
+        if hasattr(self, "branch_graph_view"):
+            self.branch_graph_view.set_theme(self.theme_mode)
+            self.refresh_branch_graph()
 
     def change_theme_accent(self, accent: str) -> None:
         self.theme_accent = accent
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, self, self.theme_mode, self.theme_accent)
+        if hasattr(self, "branch_graph_view"):
+            self.branch_graph_view.set_theme(self.theme_mode)
+            self.refresh_branch_graph()
 
     def _wire_shortcuts(self) -> None:
         self.open_repo_action.setShortcut(QKeySequence("Ctrl+O"))
@@ -919,21 +1377,9 @@ class MainWindow(QMainWindow):
             self.append_log("ℹ GitHub CLI gh not found；平台功能仍可通过 Git remote 使用。")
 
     def confirm_risk(self, args: List[str]) -> bool:
-        assessment = classify_git_command(args)
-        command_text = "git " + " ".join(shlex.quote(a) for a in args)
-        if assessment.level != RiskLevel.HIGH:
-            return True
-        message = (
-            f"{assessment.title}\n\n"
-            f"原因：{assessment.reason}\n\n"
-            f"Will run:\n{command_text}\n\n"
-            f"请输入 {assessment.confirmation_word} 继续。"
-        )
-        text, ok = QInputDialog.getText(self, "危险操作确认", message)
-        if not ok or text.strip() != assessment.confirmation_word:
-            self.append_log(f"已取消高风险命令：{command_text}")
-            return False
-        return True
+        # Kept for API compatibility. High-risk confirmation is now handled by
+        # run_git_command through the inline terminal prompt panel.
+        return classify_git_command(args).level != RiskLevel.HIGH
 
     def run_git_command(
         self,
@@ -946,8 +1392,31 @@ class MainWindow(QMainWindow):
             return
         if args[0] == "git":
             args = args[1:]
-        if risk_check and not self.confirm_risk(args):
-            return
+        if risk_check:
+            assessment = classify_git_command(args)
+            if assessment.level == RiskLevel.HIGH:
+                command_text = "git " + " ".join(shlex.quote(a) for a in args)
+                message = (
+                    f"{assessment.title}\n\n"
+                    f"原因：{assessment.reason}\n\n"
+                    f"Will run:\n{command_text}\n\n"
+                    f"请输入 {assessment.confirmation_word} 继续。"
+                )
+                def confirmed(value: str) -> None:
+                    if value.strip() == assessment.confirmation_word:
+                        self._execute_git_command(args, callback, timeout)
+                    else:
+                        self.append_log(f"已取消高风险命令：{command_text}")
+                self.request_terminal_text("危险操作确认", message, confirmed)
+                return
+        self._execute_git_command(args, callback, timeout)
+
+    def _execute_git_command(
+        self,
+        args: List[str],
+        callback: Optional[Callable[[GitResult], None]] = None,
+        timeout: int = 120,
+    ) -> None:
         command_text = "git " + " ".join(shlex.quote(a) for a in args)
         self.append_log(f"Will run:\n{command_text}")
         thread = QThread(self)
@@ -957,7 +1426,6 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self._command_finished)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
-        # Keep Python references while the command runs, then clean them before Qt deletes the C++ object.
         self._threads.append((thread, worker))
         thread.finished.connect(lambda t=thread, w=worker: self._cleanup_thread(t, w))
         thread.finished.connect(thread.deleteLater)
@@ -977,14 +1445,37 @@ class MainWindow(QMainWindow):
 
     def run_raw_command(self) -> None:
         raw = self.raw_command.text().strip()
+        self.raw_command.clear()
         if not raw:
             return
         if raw.startswith(":"):
             raw = raw[1:].strip()
-        parts = shlex.split(raw)
-        if parts and parts[0] == "git":
-            parts = parts[1:]
-        self.run_git_command(parts, callback=lambda _: self.refresh_all(), timeout=300)
+        # Bottom terminal is now a real command terminal: run exactly what the
+        # user typed. Git commands still refresh repository state afterwards.
+        if raw.startswith("git "):
+            parts = shlex.split(raw)
+            self.run_git_command(parts[1:], callback=lambda _: self.refresh_all(), timeout=300)
+        else:
+            self.run_shell_command(raw, callback=lambda _: self.refresh_all(), timeout=300)
+
+    def run_shell_command(
+        self,
+        command: str,
+        callback: Optional[Callable[[GitResult], None]] = None,
+        timeout: int = 300,
+    ) -> None:
+        self.append_log(f"Will run shell:\n{command}")
+        thread = QThread(self)
+        worker = ShellCommandWorker(command, self.runner.cwd(), callback, timeout)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._command_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        self._threads.append((thread, worker))
+        thread.finished.connect(lambda t=thread, w=worker: self._cleanup_thread(t, w))
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
 
     def run_external_command(self, cmd: List[str]) -> None:
         self.append_log("Will run external:\n" + " ".join(shlex.quote(x) for x in cmd))
@@ -1035,17 +1526,20 @@ class MainWindow(QMainWindow):
         self.run_git_command(["init"], callback=lambda _: self.refresh_all())
 
     def clone_repository(self) -> None:
-        dialog = CloneDialog(self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        url = dialog.url.text().strip()
-        dest = dialog.dest.text().strip()
-        if not url or not dest:
-            QMessageBox.warning(self, "缺少参数", "请输入远程 URL 和目标目录。")
-            return
-        parent = Path(dest)
-        self.runner.repo_path = parent
-        self.run_git_command(["clone", url], callback=lambda r: self._after_clone(r, parent), timeout=900)
+        def got_url(url: str) -> None:
+            url = url.strip()
+            if not url:
+                return
+            def got_dest(dest: str) -> None:
+                dest = dest.strip()
+                if not dest:
+                    self.append_log("Clone 已取消：缺少目标目录。")
+                    return
+                parent = Path(dest)
+                self.runner.repo_path = parent
+                self.run_git_command(["clone", url], callback=lambda r: self._after_clone(r, parent), timeout=900)
+            self.request_terminal_text("Clone 远程仓库", "目标父目录：", got_dest, str(Path.cwd()))
+        self.request_terminal_text("Clone 远程仓库", "远程 URL：", got_url)
 
     def _after_clone(self, result: GitResult, parent: Path) -> None:
         if result.ok:
@@ -1205,9 +1699,11 @@ class MainWindow(QMainWindow):
         commit = self._selected_commit_hash()
         if not commit:
             return
-        name, ok = QInputDialog.getText(self, "创建分支", "分支名：")
-        if ok and name.strip():
-            self.run_git_command(["switch", "-c", name.strip(), commit], callback=lambda _: self.refresh_all())
+        self.request_terminal_text(
+            "创建分支",
+            "分支名：",
+            lambda name: self.run_git_command(["switch", "-c", name.strip(), commit], callback=lambda _: self.refresh_all()) if name.strip() else None,
+        )
 
     def cherry_pick_selected_commit(self) -> None:
         commit = self._selected_commit_hash()
@@ -1294,9 +1790,11 @@ class MainWindow(QMainWindow):
         self.run_git_command(["checkout", commit_hash], callback=lambda _: self.refresh_all())
 
     def graph_create_branch_from_commit(self, commit_hash: str) -> None:
-        name, ok = QInputDialog.getText(self, "从图节点创建分支", "分支名：")
-        if ok and name.strip():
-            self.run_git_command(["switch", "-c", name.strip(), commit_hash], callback=lambda _: self.refresh_all())
+        self.request_terminal_text(
+            "从图节点创建分支",
+            "分支名：",
+            lambda name: self.run_git_command(["switch", "-c", name.strip(), commit_hash], callback=lambda _: self.refresh_all()) if name.strip() else None,
+        )
 
     def graph_commit_context_menu(self, commit_hash: str, pos: QPoint) -> None:
         menu = QMenu(self)
@@ -1361,9 +1859,12 @@ class MainWindow(QMainWindow):
     def push_branch_upstream(self) -> None:
         name = self._selected_branch_name()
         if name and not name.startswith("remotes/"):
-            remote, ok = QInputDialog.getText(self, "Push upstream", "remote：", text="origin")
-            if ok and remote.strip():
-                self.run_git_command(["push", "-u", remote.strip(), name], callback=lambda _: self.refresh_all(), timeout=300)
+            self.request_terminal_text(
+                "Push upstream",
+                "remote：",
+                lambda remote: self.run_git_command(["push", "-u", (remote.strip() or "origin"), name], callback=lambda _: self.refresh_all(), timeout=300),
+                "origin",
+            )
 
     def _branch_context_menu(self, pos: QPoint) -> None:
         name = self._selected_branch_name()
@@ -1402,11 +1903,16 @@ class MainWindow(QMainWindow):
         return item.text(0) if item else None
 
     def add_remote(self) -> None:
-        d = RemoteDialog("Add Remote", self)
-        if d.exec() == QDialog.DialogCode.Accepted:
-            name, url = d.name.text().strip(), d.url.text().strip()
-            if name and url:
-                self.run_git_command(["remote", "add", name, url], callback=lambda _: self.refresh_all())
+        def got_name(name: str) -> None:
+            name = name.strip()
+            if not name:
+                return
+            self.request_terminal_text(
+                "Add Remote",
+                "URL：",
+                lambda url: self.run_git_command(["remote", "add", name, url.strip()], callback=lambda _: self.refresh_all()) if url.strip() else None,
+            )
+        self.request_terminal_text("Add Remote", "remote 名称：", got_name, "origin")
 
     def remove_remote(self) -> None:
         remote = self._selected_remote()
@@ -1417,21 +1923,25 @@ class MainWindow(QMainWindow):
         remote = self._selected_remote()
         if not remote:
             return
-        url, ok = QInputDialog.getText(self, "Set Remote URL", f"{remote} URL：")
-        if ok and url.strip():
-            self.run_git_command(["remote", "set-url", remote, url.strip()], callback=lambda _: self.refresh_all())
+        self.request_terminal_text(
+            "Set Remote URL",
+            f"{remote} URL：",
+            lambda url: self.run_git_command(["remote", "set-url", remote, url.strip()], callback=lambda _: self.refresh_all()) if url.strip() else None,
+        )
 
     def fetch_remote(self) -> None:
         remote = self._selected_remote() or "--all"
         self.run_git_command(["fetch", remote], callback=lambda _: self.refresh_all(), timeout=300)
 
     def delete_remote_branch(self) -> None:
-        remote, ok = QInputDialog.getText(self, "Delete Remote Branch", "remote：", text="origin")
-        if not ok or not remote.strip():
-            return
-        branch, ok = QInputDialog.getText(self, "Delete Remote Branch", "远程分支名：")
-        if ok and branch.strip():
-            self.run_git_command(["push", remote.strip(), "--delete", branch.strip()], callback=lambda _: self.refresh_all(), timeout=300)
+        def got_remote(remote: str) -> None:
+            remote = remote.strip() or "origin"
+            self.request_terminal_text(
+                "Delete Remote Branch",
+                "远程分支名：",
+                lambda branch: self.run_git_command(["push", remote, "--delete", branch.strip()], callback=lambda _: self.refresh_all(), timeout=300) if branch.strip() else None,
+            )
+        self.request_terminal_text("Delete Remote Branch", "remote：", got_remote, "origin")
 
     # ------------------------------------------------------------------
     # Tags and Stash
@@ -1465,9 +1975,12 @@ class MainWindow(QMainWindow):
     def push_tag(self) -> None:
         tag = self._selected_tag()
         if tag:
-            remote, ok = QInputDialog.getText(self, "Push Tag", "remote：", text="origin")
-            if ok and remote.strip():
-                self.run_git_command(["push", remote.strip(), tag], callback=lambda _: self.refresh_all(), timeout=300)
+            self.request_terminal_text(
+                "Push Tag",
+                "remote：",
+                lambda remote: self.run_git_command(["push", (remote.strip() or "origin"), tag], callback=lambda _: self.refresh_all(), timeout=300),
+                "origin",
+            )
 
     def stash_push(self) -> None:
         msg = self.stash_message.text().strip() or "Git Terminal stash"
@@ -1645,9 +2158,12 @@ class MainWindow(QMainWindow):
     # Misc helpers
     # ------------------------------------------------------------------
     def create_rescue_branch(self) -> None:
-        name, ok = QInputDialog.getText(self, "Rescue Branch", "救援分支名：", text="rescue/head-1")
-        if ok and name.strip():
-            self.run_git_command(["switch", "-c", name.strip(), "HEAD@{1}"], callback=lambda _: self.refresh_all())
+        self.request_terminal_text(
+            "Rescue Branch",
+            "救援分支名：",
+            lambda name: self.run_git_command(["switch", "-c", name.strip(), "HEAD@{1}"], callback=lambda _: self.refresh_all()) if name.strip() else None,
+            "rescue/head-1",
+        )
 
     def copy_last_command(self) -> None:
         text = self.command_log.toPlainText().splitlines()
@@ -1697,6 +2213,8 @@ class MainWindow(QMainWindow):
         }
         if text in mapping:
             self.tabs.setCurrentIndex(mapping[text])
+            if mapping[text] == 0:
+                self.refresh_worktree()
 
     def show_terminal_help(self) -> None:
         QMessageBox.information(

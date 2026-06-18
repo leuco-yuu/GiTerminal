@@ -183,7 +183,12 @@ class CommitGraphView(QGraphicsView):
         self.setMinimumWidth(80)
         self.selected_hash = ""
         self.node_items: Dict[str, CommitNodeItem] = {}
-        self.setBackgroundBrush(QBrush(QColor("#020617")))
+        self.theme_mode = "dark"
+        self.set_theme("dark")
+
+    def set_theme(self, mode: str = "dark") -> None:
+        self.theme_mode = mode
+        self.setBackgroundBrush(QBrush(QColor("#ffffff" if mode == "light" else "#1e1e1e")))
 
     def wheelEvent(self, event):  # noqa: N802
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -209,22 +214,26 @@ class CommitGraphView(QGraphicsView):
             text.setDefaultTextColor(QColor("#94a3b8"))
             return
 
-        positions, lanes = self._layout_positions(commits)
+        # The raw git log arrives newest -> oldest. Draw oldest on the left and
+        # newest on the right, Mermaid LR style, so arrows are old -> new.
+        draw_order = list(reversed(commits))
+        positions, lanes = self._layout_positions(draw_order)
         max_lane = max(lanes.values(), default=0)
-        self._draw_lane_backgrounds(max_lane, len(commits))
+        self._draw_lane_backgrounds(max_lane, len(draw_order))
 
-        for commit in commits:
+        # Parent -> child, i.e. old commit -> new commit.
+        for commit in draw_order:
             if commit.hash not in positions:
                 continue
-            x1, y1 = positions[commit.hash]
+            child_x, child_y = positions[commit.hash]
             lane = lanes.get(commit.hash, 0)
             color = QColor(LANE_COLORS[lane % len(LANE_COLORS)])
             for parent in commit.parents:
                 if parent in positions:
-                    x2, y2 = positions[parent]
-                    self._add_edge(QPointF(x1, y1), QPointF(x2, y2), color)
+                    parent_x, parent_y = positions[parent]
+                    self._add_edge(QPointF(parent_x, parent_y), QPointF(child_x, child_y), color)
 
-        for commit in commits:
+        for commit in draw_order:
             if commit.hash not in positions:
                 continue
             x, y = positions[commit.hash]
@@ -239,67 +248,78 @@ class CommitGraphView(QGraphicsView):
         self.fitInView(self.scene_obj.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def _layout_positions(self, commits: List[GraphCommit]) -> Tuple[Dict[str, tuple[float, float]], Dict[str, int]]:
-        lane_width = 64.0
-        row_height = 58.0
-        x_origin = 56.0
-        y_origin = 44.0
-        active_lanes: List[str] = []
+        # Commits are oldest -> newest. Lay them out horizontally: time flows
+        # left-to-right, lanes stack vertically like a compact Mermaid LR graph.
+        column_width = 128.0
+        lane_height = 74.0
+        x_origin = 64.0
+        y_origin = 58.0
         positions: Dict[str, tuple[float, float]] = {}
         lanes: Dict[str, int] = {}
+        next_lane = 0
+        child_counts: Dict[str, int] = {}
 
-        for row, commit in enumerate(commits):
-            if commit.hash in active_lanes:
-                lane = active_lanes.index(commit.hash)
-            else:
-                lane = len(active_lanes)
-                active_lanes.append(commit.hash)
-            lanes[commit.hash] = lane
-            positions[commit.hash] = (x_origin + lane * lane_width, y_origin + row * row_height)
-
+        for col, commit in enumerate(commits):
+            lane = None
             if commit.parents:
-                active_lanes[lane] = commit.parents[0]
-                insert_at = lane + 1
-                for parent in commit.parents[1:]:
-                    if parent not in active_lanes:
-                        active_lanes.insert(insert_at, parent)
-                        insert_at += 1
-            else:
-                if 0 <= lane < len(active_lanes):
-                    active_lanes.pop(lane)
+                first_parent = commit.parents[0]
+                if first_parent in lanes:
+                    used_children = child_counts.get(first_parent, 0)
+                    if used_children == 0:
+                        lane = lanes[first_parent]
+                    else:
+                        lane = next_lane
+                        next_lane += 1
+                    child_counts[first_parent] = used_children + 1
+
+            if lane is None:
+                lane = next_lane
+                next_lane += 1
+
+            lanes[commit.hash] = lane
+            positions[commit.hash] = (x_origin + col * column_width, y_origin + lane * lane_height)
 
         return positions, lanes
 
-    def _draw_lane_backgrounds(self, max_lane: int, rows: int) -> None:
-        lane_width = 64.0
-        row_height = 58.0
-        height = max(360.0, rows * row_height + 90)
+    def _draw_lane_backgrounds(self, max_lane: int, cols: int) -> None:
+        column_width = 128.0
+        lane_height = 74.0
+        width = max(520.0, cols * column_width + 120)
         for lane in range(max_lane + 1):
-            x = 56.0 + lane * lane_width
+            y = 58.0 + lane * lane_height
             color = QColor(LANE_COLORS[lane % len(LANE_COLORS)])
-            color.setAlpha(22)
-            rect = QGraphicsRectItem(x - 24, 12, 48, height)
+            color.setAlpha(14 if self.theme_mode == "dark" else 24)
+            rect = QGraphicsRectItem(24, y - 27, width, 54)
             rect.setBrush(QBrush(color))
-            rect.setPen(QPen(Qt.PenStyle.NoPen))
+            border = QColor(color)
+            border.setAlpha(34 if self.theme_mode == "dark" else 55)
+            rect.setPen(QPen(border, 1))
             rect.setZValue(-10)
             self.scene_obj.addItem(rect)
 
     def _add_edge(self, start: QPointF, end: QPointF, color: QColor) -> None:
-        path = QPainterPath(start)
-        mid_y = (start.y() + end.y()) / 2
-        dx = max(18.0, abs(end.x() - start.x()) * 0.45)
-        path.cubicTo(QPointF(start.x(), mid_y - dx * 0.15), QPointF(end.x(), mid_y + dx * 0.15), end)
+        # Straight old -> new edge. Start/end are node centers.
+        dx = end.x() - start.x()
+        dy = end.y() - start.y()
+        length = max(1.0, (dx * dx + dy * dy) ** 0.5)
+        ux, uy = dx / length, dy / length
+        line_start = QPointF(start.x() + ux * 18.0, start.y() + uy * 18.0)
+        line_end = QPointF(end.x() - ux * 18.0, end.y() - uy * 18.0)
+
+        path = QPainterPath(line_start)
+        path.lineTo(line_end)
         edge = QGraphicsPathItem(path)
         edge_color = QColor(color)
-        edge_color.setAlpha(210)
-        edge.setPen(QPen(edge_color, 3.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        edge_color.setAlpha(220)
+        edge.setPen(QPen(edge_color, 2.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         edge.setZValue(1)
         self.scene_obj.addItem(edge)
 
-        angle = atan2(end.y() - start.y(), end.x() - start.x())
-        arrow_size = 8.0
-        arrow_tip = QPointF(end.x(), end.y() - 15)
-        p1 = QPointF(arrow_tip.x() - arrow_size * cos(angle - 0.52), arrow_tip.y() - arrow_size * sin(angle - 0.52))
-        p2 = QPointF(arrow_tip.x() - arrow_size * cos(angle + 0.52), arrow_tip.y() - arrow_size * sin(angle + 0.52))
+        arrow_tip = line_end
+        base = QPointF(arrow_tip.x() - ux * 11.0, arrow_tip.y() - uy * 11.0)
+        px, py = -uy, ux
+        p1 = QPointF(base.x() + px * 5.8, base.y() + py * 5.8)
+        p2 = QPointF(base.x() - px * 5.8, base.y() - py * 5.8)
         arrow = QGraphicsPolygonItem(QPolygonF([arrow_tip, p1, p2]))
         arrow.setBrush(QBrush(edge_color))
         arrow.setPen(QPen(edge_color, 1))
@@ -307,14 +327,11 @@ class CommitGraphView(QGraphicsView):
         self.scene_obj.addItem(arrow)
 
     def _add_commit_label(self, commit: GraphCommit, x: float, y: float, color: QColor) -> None:
-        label_x = x + 24
-        label_y = y - 17
-        # Keep graph nodes/labels compact. Details are shown in the side detail
-        # panel on hover/click.
-        refs = commit.refs.replace("<", "&lt;").replace(">", "&gt;")
-        html = f"<span style='color:#e5e7eb; font-weight:700'>{commit.date}</span>"
-        if refs:
-            html += f" <span style='color:{color.name()}; font-weight:700'>●</span>"
+        label_x = x - 34
+        label_y = y + 20
+        # Keep node text compact: date only. Details are shown in the side panel.
+        label_color = "#1f2937" if self.theme_mode == "light" else "#d4d4d4"
+        html = f"<span style='color:{label_color}; font-weight:700'>{commit.date}</span>"
         text = QGraphicsTextItem()
         font = QFont("Segoe UI", 9)
         text.setFont(font)
@@ -324,11 +341,59 @@ class CommitGraphView(QGraphicsView):
         text.setZValue(12)
         self.scene_obj.addItem(text)
 
-        # Soft label background capsule.
         bounds = text.boundingRect().adjusted(-8, -3, 8, 3)
         bg = QGraphicsRectItem(bounds)
         bg.setPos(label_x, label_y)
-        bg.setBrush(QBrush(QColor(15, 23, 42, 210)))
-        bg.setPen(QPen(QColor(51, 65, 85, 180), 1))
+        bg.setBrush(QBrush(QColor(255, 255, 255, 225) if self.theme_mode == "light" else QColor(37, 37, 38, 220)))
+        bg.setPen(QPen(QColor(209, 213, 219, 220) if self.theme_mode == "light" else QColor(68, 68, 68, 190), 1))
         bg.setZValue(11)
         self.scene_obj.addItem(bg)
+
+        branch_name = self._branch_label(commit.refs)
+        if branch_name:
+            tag_x = x + 24
+            tag_y = y - 34
+            callout = QPainterPath(QPointF(x + 9, y - 9))
+            callout.lineTo(QPointF(tag_x, tag_y + 10))
+            callout_item = QGraphicsPathItem(callout)
+            call_color = QColor(color)
+            call_color.setAlpha(180)
+            callout_item.setPen(QPen(call_color, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            callout_item.setZValue(9)
+            self.scene_obj.addItem(callout_item)
+
+            tag = QGraphicsTextItem()
+            tag.setFont(QFont("Segoe UI", 8))
+            safe = branch_name.replace("<", "&lt;").replace(">", "&gt;")
+            tag.setHtml(f"<span style='color:white; font-weight:700'>{safe}</span>")
+            tag.setPos(tag_x, tag_y)
+            tag.setToolTip(commit.tooltip)
+            tag.setZValue(14)
+            self.scene_obj.addItem(tag)
+            tb = tag.boundingRect().adjusted(-7, -3, 7, 3)
+            tag_bg = QGraphicsRectItem(tb)
+            tag_bg.setPos(tag_x, tag_y)
+            fill = QColor(color)
+            fill.setAlpha(215)
+            tag_bg.setBrush(QBrush(fill))
+            tag_bg.setPen(QPen(QColor("#ffffff"), 0.8))
+            tag_bg.setZValue(13)
+            self.scene_obj.addItem(tag_bg)
+
+    def _branch_label(self, refs: str) -> str:
+        if not refs:
+            return ""
+        names = [r.strip() for r in refs.split(",") if r.strip()]
+        cleaned = []
+        for name in names:
+            name = name.replace("HEAD ->", "").strip()
+            if name == "HEAD":
+                continue
+            # Prefer human branch/tag names over remote bookkeeping.
+            cleaned.append(name)
+        if not cleaned:
+            return ""
+        label = cleaned[0]
+        if len(label) > 28:
+            label = label[:25] + "…"
+        return label
