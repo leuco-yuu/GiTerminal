@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import html
 import os
-import base64
 import re
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -168,6 +168,8 @@ class MainWindow(QMainWindow):
         self._last_bottom_height = 190
         self._initial_center_sizes = [430, 130]
         self._initial_horizontal_sizes = [220, 580, 220]
+        self._git_config_tree_updating = False
+        self._cli_install_scripts: list[Path] = []
 
         self._build_actions()
         self._build_ui()
@@ -690,8 +692,8 @@ class MainWindow(QMainWindow):
         self.context_panel = QWidget()
         self.context_panel.setMinimumWidth(0)
         self.context_panel_layout = QVBoxLayout(self.context_panel)
-        self.context_panel_layout.setContentsMargins(6, 6, 6, 6)
-        self.context_panel_layout.setSpacing(8)
+        self.context_panel_layout.setContentsMargins(4, 0, 4, 4)
+        self.context_panel_layout.setSpacing(4)
         self.context_buttons = []
         self._populate_context_action_groups()
         self.context_scroll.setWidget(self.context_panel)
@@ -784,7 +786,8 @@ class MainWindow(QMainWindow):
             ("Pull", lambda: self.run_git_command(["pull", "--ff-only"], callback=lambda _: self.refresh_all(), timeout=300), False),
             ("Push", lambda: self.run_git_command(["push"], callback=lambda _: self.refresh_all(), timeout=300), False),
             ("Remote -v", lambda: self.run_git_command(["remote", "-v"], callback=self.show_result_in_log), False),
-            ("Set Track", self.set_tracking_branch_from_remote_page, False),
+            ("Track Existing", self.track_existing_remote_branch_from_panel, True),
+            ("Push -u", self.publish_local_branch_and_track_from_panel, True),
             ("Add Remote", self.add_remote, True),
             ("SSH Auth", self.configure_provider_ssh_from_menu, True),
             ("HTTPS Auth", self.configure_provider_https_from_menu, True),
@@ -819,7 +822,7 @@ class MainWindow(QMainWindow):
             name = item.get("name", "")
             commands = item.get("commands", "")
             if name and commands:
-                custom_entries.append((name, lambda cmds=commands: self.run_custom_button_commands(cmds), True))
+                custom_entries.append((name, lambda _checked=False, cmds=commands: self.run_custom_button_commands(cmds), True))
         custom_box = add_group("Custom", custom_entries)
         custom_box.setToolTip(
             "用户自定义按钮。暴露接口：window.register_custom_button('Name', 'git status\\ngit fetch --all --prune')"
@@ -1810,12 +1813,55 @@ class MainWindow(QMainWindow):
     def _build_remote_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(6, 0, 6, 6)
         layout.setSpacing(6)
+
+        tracking_box = QGroupBox("Tracking / Upstream")
+        tracking_layout = QGridLayout(tracking_box)
+        tracking_layout.setContentsMargins(8, 8, 8, 8)
+        tracking_layout.setHorizontalSpacing(8)
+        tracking_layout.setVerticalSpacing(6)
+        self.remote_tracking_local = QLineEdit()
+        self.remote_tracking_local.setPlaceholderText("本地分支，例如 newbee2")
+        self.remote_tracking_remote = QLineEdit("origin")
+        self.remote_tracking_remote.setPlaceholderText("remote，例如 origin")
+        self.remote_tracking_branch = QLineEdit()
+        self.remote_tracking_branch.setPlaceholderText("远程分支名，默认等于本地分支")
+        for edit in (self.remote_tracking_local, self.remote_tracking_remote, self.remote_tracking_branch):
+            edit.setMinimumHeight(22)
+            edit.setMaximumHeight(24)
+            edit.setFixedWidth(180)
+            edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        tracking_layout.addWidget(QLabel("本地分支"), 0, 0, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        tracking_layout.addWidget(self.remote_tracking_local, 0, 1)
+        tracking_layout.addWidget(QLabel("remote"), 0, 2, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        tracking_layout.addWidget(self.remote_tracking_remote, 0, 3)
+        tracking_layout.addWidget(QLabel("远程分支"), 0, 4, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        tracking_layout.addWidget(self.remote_tracking_branch, 0, 5)
+        tracking_layout.setColumnStretch(6, 1)
+
+        fetch_tracking = QPushButton("Fetch remote branches")
+        fetch_tracking.clicked.connect(self.fetch_remote_branches_from_tracking_panel)
+        track_existing = QPushButton("Track existing remote branch")
+        track_existing.setToolTip("绑定已存在的远程分支：git branch --set-upstream-to origin/name local")
+        track_existing.clicked.connect(self.track_existing_remote_branch_from_panel)
+        publish_track = QPushButton("Publish local branch + track (Push -u)")
+        publish_track.setToolTip("发布新的本地分支到远程，并同时设置 tracking：git push -u origin local")
+        publish_track.clicked.connect(self.publish_local_branch_and_track_from_panel)
+        show_upstream = QPushButton("Show upstream")
+        show_upstream.clicked.connect(self.show_current_upstream_from_panel)
+        for index, button in enumerate([fetch_tracking, track_existing, publish_track, show_upstream]):
+            tracking_layout.addWidget(button, 1, index)
+        tracking_note = QLabel("提示：远程分支还不存在时，不要用 Track existing；应使用 Push -u，它会创建远程分支并设置 upstream。")
+        tracking_note.setWordWrap(True)
+        tracking_layout.addWidget(tracking_note, 2, 0, 1, 7)
+        layout.addWidget(tracking_box, 0)
+
         self.remote_tree = QTreeWidget()
         self.remote_tree.setColumnCount(3)
         self.remote_tree.setHeaderLabels(["Remote", "Type", "URL"])
-        layout.addWidget(self.remote_tree, 8)
+        self.remote_tree.currentItemChanged.connect(lambda *_: self._sync_remote_tracking_fields(force=True))
+        layout.addWidget(self.remote_tree, 6)
         row = QGridLayout()
         row.setHorizontalSpacing(6)
         row.setVerticalSpacing(4)
@@ -1824,8 +1870,9 @@ class MainWindow(QMainWindow):
             ("Add", self.add_remote),
             ("Remove", self.remove_remote),
             ("Set URL", self.set_remote_url),
-            ("Set Tracking", self.set_tracking_branch_from_remote_page),
-            ("Push -u", self.push_current_branch_upstream_from_menu),
+            ("Track Existing", self.track_existing_remote_branch_from_panel),
+            ("Push -u", self.publish_local_branch_and_track_from_panel),
+            ("Create SSH Key", self.create_provider_ssh_key_from_page),
             ("SSH Auth", self.configure_provider_ssh_from_menu),
             ("HTTPS Auth", self.configure_provider_https_from_menu),
             ("Test Auth", self.test_provider_auth_from_menu),
@@ -1836,7 +1883,7 @@ class MainWindow(QMainWindow):
         ]):
             b = QPushButton(text)
             b.clicked.connect(handler)
-            row.addWidget(b, index // 3, index % 3)
+            row.addWidget(b, index // 4, index % 4)
         layout.addLayout(row)
         self.remote_output = QPlainTextEdit()
         self.remote_output.setReadOnly(True)
@@ -2088,16 +2135,45 @@ class MainWindow(QMainWindow):
         git_config_layout = QVBoxLayout(git_config)
         git_config_layout.setSpacing(8)
         git_config_tip = QLabel(
-            "Git 配置页：支持 global / local / system 作用域，常用 http/https 代理、credential、pull、core、默认分支等配置；SSH 端口走 ~/.ssh/config。"
+            "Git 配置页：上方直接列出 global/local/system 配置，包括代理、端口、credential、SSH 命令等；下方保留单项编辑。"
         )
         git_config_tip.setWordWrap(True)
         git_config_layout.addWidget(git_config_tip)
-        self.git_config_status = QLabel("Git 配置：选择作用域和 key 后可读取、设置、删除或列出。")
+        self.git_config_status = QLabel("Git 配置：刷新后直接列出所有配置项；可直接双击 Key/Value 编辑，保存后会执行 git config。")
         self.git_config_status.setObjectName("ProviderStatusLabel")
         self.git_config_status.setWordWrap(True)
         git_config_layout.addWidget(self.git_config_status)
 
-        config_box = QGroupBox("Git config 读写")
+        config_list_box = QGroupBox("Git config 列表")
+        config_list_layout = QVBoxLayout(config_list_box)
+        self.git_config_tree = QTreeWidget()
+        self.git_config_tree.setColumnCount(4)
+        self.git_config_tree.setHeaderLabels(["作用域", "来源", "Key", "Value"])
+        self.git_config_tree.setRootIsDecorated(False)
+        self.git_config_tree.setAlternatingRowColors(True)
+        self.git_config_tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
+        self.git_config_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.git_config_tree.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.git_config_tree.itemSelectionChanged.connect(self._copy_selected_git_config_to_editor)
+        self.git_config_tree.itemChanged.connect(self._git_config_tree_item_changed)
+        config_list_layout.addWidget(self.git_config_tree, 1)
+        config_list_buttons = QHBoxLayout()
+        for text, handler in [
+            ("刷新全部", self.refresh_git_config_list_all),
+            ("只看 global", lambda: self.refresh_git_config_list_scope("global")),
+            ("只看 local", lambda: self.refresh_git_config_list_scope("local")),
+            ("只看 system", lambda: self.refresh_git_config_list_scope("system")),
+            ("设置代理...", self.configure_proxy_from_page),
+            ("刷新 SSH config", self.show_ssh_config_file),
+        ]:
+            button = QPushButton(text)
+            button.clicked.connect(handler)
+            config_list_buttons.addWidget(button)
+        config_list_buttons.addStretch(1)
+        config_list_layout.addLayout(config_list_buttons)
+        git_config_layout.addWidget(config_list_box, 2)
+
+        config_box = QGroupBox("Git config 单项编辑")
         config_form = QFormLayout(config_box)
         config_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         config_form.setHorizontalSpacing(12)
@@ -2110,7 +2186,8 @@ class MainWindow(QMainWindow):
             "user.name", "user.email", "core.editor", "core.autocrlf", "core.safecrlf",
             "core.filemode", "core.longpaths", "init.defaultBranch", "pull.rebase", "pull.ff",
             "fetch.prune", "push.default", "credential.helper", "http.proxy", "https.proxy",
-            "http.sslVerify", "http.postBuffer", "ssh.variant", "core.sshCommand",
+            "http.sslVerify", "http.postBuffer", "http.version", "http.proxyAuthMethod",
+            "http.noProxy", "url.<base>.insteadOf", "ssh.variant", "core.sshCommand",
         ])
         self.git_config_value = QLineEdit()
         self.git_config_value.setPlaceholderText("要写入的值；读取/删除时可留空")
@@ -2125,6 +2202,7 @@ class MainWindow(QMainWindow):
             ("设置", self.set_git_config_key),
             ("删除", self.unset_git_config_key),
             ("列出作用域", self.list_git_config_scope),
+            ("刷新列表", self.refresh_git_config_list_all),
         ]:
             button = QPushButton(text)
             button.clicked.connect(handler)
@@ -2133,26 +2211,27 @@ class MainWindow(QMainWindow):
         config_form.addRow(config_buttons)
         git_config_layout.addWidget(config_box)
 
-        ssh_box = QGroupBox("SSH Host / 端口配置")
+        ssh_box = QGroupBox("SSH / HTTPS 认证与密钥")
         ssh_layout = QVBoxLayout(ssh_box)
-        ssh_tip = QLabel("Git 本身没有单独的 SSH 端口项；SSH 地址的端口应配置在 ~/.ssh/config 的 Host 块，或写入 core.sshCommand。")
+        ssh_tip = QLabel("SSH 推荐每个平台、每个账号使用独立私钥；HTTPS 使用 token / credential helper，不生成公私钥。SSH 端口写入 ~/.ssh/config 的 Host 块。")
         ssh_tip.setWordWrap(True)
         ssh_layout.addWidget(ssh_tip)
         ssh_buttons = QGridLayout()
         for index, (text, handler) in enumerate([
+            ("创建平台独立 SSH 私钥...", self.create_provider_ssh_key_from_page),
+            ("多用户 SSH 一键配置...", self.configure_provider_ssh_from_menu),
+            ("列出本机 SSH Key", self.list_local_ssh_keys),
             ("配置 SSH Host 端口...", self.configure_ssh_host_port_from_page),
             ("设置 core.sshCommand...", self.configure_core_ssh_command_from_page),
             ("查看 ~/.ssh/config", self.show_ssh_config_file),
-            ("测试 ssh -T...", self.test_provider_auth_from_menu),
-            ("设置 Credential Helper", self.configure_credential_helper_from_page),
-            ("刷新状态", self.refresh_platform_statuses),
+            ("HTTPS / Credential Helper...", self.configure_credential_helper_from_page),
+            ("测试认证...", self.test_provider_auth_from_menu),
         ]):
             button = QPushButton(text)
             button.clicked.connect(handler)
             ssh_buttons.addWidget(button, index // 3, index % 3)
         ssh_layout.addLayout(ssh_buttons)
         git_config_layout.addWidget(ssh_box)
-        git_config_layout.addStretch(1)
         platform_tabs.addTab(git_config, "Git 配置")
 
         # User page -------------------------------------------------------
@@ -2206,6 +2285,7 @@ class MainWindow(QMainWindow):
             ("gh auth login", ["gh", "auth", "login"]),
             ("gh auth status", ["gh", "auth", "status"]),
             ("gh auth setup-git", ["gh", "auth", "setup-git"]),
+            ("创建 SSH 私钥", self.create_provider_ssh_key_from_page),
             ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
             ("HTTPS 配置", self.configure_provider_https_from_menu),
             ("认证测试", self.test_provider_auth_from_menu),
@@ -2244,6 +2324,7 @@ class MainWindow(QMainWindow):
             ("glab auth login", ["glab", "auth", "login"]),
             ("glab auth status", ["glab", "auth", "status"]),
             ("glab config list", ["glab", "config", "list"]),
+            ("创建 SSH 私钥", self.create_provider_ssh_key_from_page),
             ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
             ("HTTPS 配置", self.configure_provider_https_from_menu),
             ("认证测试", self.test_provider_auth_from_menu),
@@ -2291,6 +2372,7 @@ class MainWindow(QMainWindow):
         gitee_buttons = QHBoxLayout()
         for text, handler in [
             ("检查 token / repos", self.gitee_list_repos),
+            ("创建 SSH 私钥", self.create_provider_ssh_key_from_page),
             ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
             ("HTTPS 配置", self.configure_provider_https_from_menu),
             ("认证测试", self.test_provider_auth_from_menu),
@@ -2334,10 +2416,303 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.platform_output, 1)
         self._add_scrollable_tab(page, "平台")
         self.refresh_platform_statuses()
+        self.refresh_git_config_list_all()
 
     # ------------------------------------------------------------------
     # Git config page helpers
     # ------------------------------------------------------------------
+
+    def _parse_git_config_lines(self, scope: str, text: str) -> list[tuple[str, str, str, str]]:
+        rows: list[tuple[str, str, str, str]] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            origin = ""
+            pair = line
+            if "\t" in line:
+                origin, pair = line.split("\t", 1)
+            elif " " in line and line.startswith(("file:", "command line:")):
+                origin, pair = line.split(None, 1)
+            if "=" in pair:
+                key, value = pair.split("=", 1)
+            else:
+                key, value = pair, ""
+            rows.append((scope, origin, key.strip(), value.strip()))
+        return rows
+
+    def _set_git_config_tree_rows(self, rows: list[tuple[str, str, str, str]], warnings: list[str] | None = None) -> None:
+        tree = getattr(self, "git_config_tree", None)
+        if tree is None:
+            return
+        self._git_config_tree_updating = True
+        try:
+            tree.clear()
+            for scope, origin, key, value in rows:
+                item = QTreeWidgetItem([scope, origin, key, value])
+                # Scope/origin are informational; Key and Value are directly editable.
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+                item.setData(0, Qt.ItemDataRole.UserRole, (scope, origin, key, value))
+                item.setToolTip(0, "只读：配置作用域")
+                item.setToolTip(1, origin or "只读：来源文件")
+                item.setToolTip(2, "双击可改 key；改名会先 unset 原 key，再 set 新 key")
+                item.setToolTip(3, value or "双击可直接改 value")
+                tree.addTopLevelItem(item)
+            for col, width in enumerate([74, 300, 210, 420]):
+                tree.setColumnWidth(col, width)
+        finally:
+            self._git_config_tree_updating = False
+        summary = f"已列出 {len(rows)} 条 Git config。可双击 Key/Value 直接编辑。"
+        if warnings:
+            summary += " " + "；".join(warnings)
+        if hasattr(self, "git_config_status"):
+            self.git_config_status.setText("✓ " + summary if rows else "⚠ " + summary)
+        if hasattr(self, "platform_output"):
+            lines = ["Scope\tOrigin\tKey\tValue"] + ["\t".join(r) for r in rows]
+            if warnings:
+                lines += ["", "Warnings:", *warnings]
+            self.platform_output.setPlainText("\n".join(lines) if rows or warnings else "(no git config entries)")
+
+    def _git_config_tree_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        if getattr(self, "_git_config_tree_updating", False):
+            return
+        if column not in {2, 3}:
+            self._git_config_tree_updating = True
+            try:
+                original = item.data(0, Qt.ItemDataRole.UserRole) or tuple(item.text(i) for i in range(4))
+                item.setText(column, str(original[column]))
+            finally:
+                self._git_config_tree_updating = False
+            self.append_log("Git config 列表中只有 Key 和 Value 支持直接编辑。")
+            return
+        original = item.data(0, Qt.ItemDataRole.UserRole) or tuple(item.text(i) for i in range(4))
+        old_scope, _old_origin, old_key, old_value = [str(x) for x in original]
+        new_key = item.text(2).strip()
+        new_value = item.text(3).strip()
+        if not new_key:
+            self._git_config_tree_updating = True
+            try:
+                item.setText(2, old_key)
+                item.setText(3, old_value)
+            finally:
+                self._git_config_tree_updating = False
+            self.append_log("Git config 更新已取消：key 不能为空。")
+            return
+        if old_scope == "local" and not self.runner.repo_path:
+            self.append_log("Git config 更新已取消：local 作用域需要先打开仓库。")
+            return
+        commands: list[str] = []
+        if new_key != old_key:
+            commands.append(f"git config --{old_scope} --unset-all {self._shell_quote(old_key)}")
+        commands.append(f"git config --{old_scope} {self._shell_quote(new_key)} {self._shell_quote(new_value)}")
+        command = "\n".join(commands)
+
+        def after(result: GitResult) -> None:
+            if result.ok:
+                self.append_log(f"✓ 已更新 Git config：{old_scope} {new_key}")
+                self.refresh_git_config_list_scope(old_scope)
+            else:
+                self._git_config_tree_updating = True
+                try:
+                    item.setText(2, old_key)
+                    item.setText(3, old_value)
+                    item.setData(0, Qt.ItemDataRole.UserRole, original)
+                finally:
+                    self._git_config_tree_updating = False
+                self.append_log(f"✗ Git config 更新失败，已回滚界面：{result.output.strip() or result.stderr.strip()}")
+        self.run_shell_command(command, callback=after, timeout=120)
+
+    def refresh_git_config_list_scope(self, scope: str | None = None) -> None:
+        scope = (scope or (self.git_config_scope.currentText().strip() if hasattr(self, "git_config_scope") else "global")).lower()
+        if scope not in {"global", "local", "system"}:
+            scope = "global"
+        if scope == "local" and not self.runner.repo_path:
+            self._set_git_config_tree_rows([], ["local 作用域需要先打开仓库"])
+            return
+        result = self.runner.run(["config", f"--{scope}", "--list", "--show-origin"], cwd=None if scope != "local" else self.runner.repo_path)
+        rows = self._parse_git_config_lines(scope, result.output)
+        warnings = [] if result.ok else [result.stderr.strip() or result.stdout.strip() or f"{scope} 读取失败"]
+        self._set_git_config_tree_rows(rows, warnings)
+
+    def refresh_git_config_list_all(self) -> None:
+        rows: list[tuple[str, str, str, str]] = []
+        warnings: list[str] = []
+        for scope in ["global", "local", "system"]:
+            if scope == "local" and not self.runner.repo_path:
+                warnings.append("local 跳过：未打开仓库")
+                continue
+            result = self.runner.run(["config", f"--{scope}", "--list", "--show-origin"], cwd=None if scope != "local" else self.runner.repo_path)
+            if result.ok or result.output.strip():
+                rows.extend(self._parse_git_config_lines(scope, result.output))
+            elif result.returncode not in {0, 1}:
+                warnings.append(f"{scope} 读取失败：{(result.stderr or result.stdout).strip()}")
+        self._set_git_config_tree_rows(rows, warnings)
+
+    def _copy_selected_git_config_to_editor(self) -> None:
+        tree = getattr(self, "git_config_tree", None)
+        if tree is None:
+            return
+        items = tree.selectedItems()
+        if not items:
+            return
+        item = items[0]
+        scope, _origin, key, value = [item.text(i) for i in range(4)]
+        if hasattr(self, "git_config_scope"):
+            index = self.git_config_scope.findText(scope)
+            if index >= 0:
+                self.git_config_scope.setCurrentIndex(index)
+        if hasattr(self, "git_config_key"):
+            index = self.git_config_key.findText(key)
+            if index < 0:
+                self.git_config_key.addItem(key)
+                index = self.git_config_key.findText(key)
+            self.git_config_key.setCurrentIndex(index)
+            self.git_config_key.setEditText(key)
+        if hasattr(self, "git_config_value"):
+            self.git_config_value.setText(value)
+
+    def _git_config_cwd_for_scope(self, scope: str) -> str | None:
+        return self.runner.cwd() if scope == "local" else None
+
+    def _git_config_key_exists(self, scope: str, key: str) -> bool:
+        result = self.runner.run(["config", f"--{scope}", "--get-all", key], cwd=self._git_config_cwd_for_scope(scope), timeout=30)
+        return result.ok and bool(result.output.strip())
+
+    def _format_git_config_scope_list(self, scope: str) -> str:
+        result = self.runner.run(["config", f"--{scope}", "--list", "--show-origin"], cwd=self._git_config_cwd_for_scope(scope), timeout=30)
+        text = result.output.strip()
+        if result.ok:
+            return text or f"({scope} 没有任何 Git config 项)"
+        return f"读取 {scope} config 失败：{(result.stderr or result.stdout).strip() or 'unknown error'}"
+
+    def apply_proxy_settings(self, scope: str, entries: list[tuple[str, str]]) -> None:
+        """Set or clear proxy config without treating missing keys as failures."""
+        if scope == "local" and not self.runner.repo_path:
+            self.append_log("代理设置已取消：local 作用域需要先打开仓库。")
+            return
+        messages: list[str] = [f"Git 代理配置作用域：{scope}"]
+        failures: list[str] = []
+        for key, value in entries:
+            value = value.strip()
+            if value:
+                result = self.runner.run(["config", f"--{scope}", key, value], cwd=self._git_config_cwd_for_scope(scope), timeout=30)
+                if result.ok:
+                    messages.append(f"✓ 已设置 {key} = {value}")
+                else:
+                    error = (result.stderr or result.stdout).strip() or "unknown error"
+                    messages.append(f"✗ 设置失败 {key}: {error}")
+                    failures.append(key)
+                continue
+
+            if not self._git_config_key_exists(scope, key):
+                messages.append(f"- {key} 未配置，无需删除。")
+                continue
+
+            result = self.runner.run(["config", f"--{scope}", "--unset-all", key], cwd=self._git_config_cwd_for_scope(scope), timeout=30)
+            if result.ok:
+                messages.append(f"✓ 已删除 {key}")
+            else:
+                error = (result.stderr or result.stdout).strip() or "unknown error"
+                messages.append(f"✗ 删除失败 {key}: {error}")
+                failures.append(key)
+
+        messages.append("")
+        messages.append(f"当前 {scope} config：")
+        messages.append(self._format_git_config_scope_list(scope))
+        output = "\n".join(messages)
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(output)
+        self.append_log(("✗" if failures else "✓") + " Git 代理配置完成\n" + output)
+        self.refresh_git_config_list_scope(scope)
+
+    def configure_proxy_from_page(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            scope = values.get("scope", "global").strip().lower() or "global"
+            if scope not in {"global", "local", "system"}:
+                scope = "global"
+            self.apply_proxy_settings(scope, [
+                ("http.proxy", values.get("http_proxy", "")),
+                ("https.proxy", values.get("https_proxy", "")),
+                ("http.noProxy", values.get("no_proxy", "")),
+            ])
+        self.request_workspace_form(
+            "设置 Git HTTP/HTTPS 代理",
+            "直接设置或清空代理配置。例：http://127.0.0.1:7890；留空会删除对应 key。不存在的 key 不会被当成错误。",
+            [
+                ("scope", "作用域 global/local/system", "global", False),
+                ("http_proxy", "http.proxy", "http://127.0.0.1:7890", False),
+                ("https_proxy", "https.proxy", "http://127.0.0.1:7890", False),
+                ("no_proxy", "http.noProxy", "localhost,127.0.0.1", False),
+            ],
+            submitted,
+        )
+
+    def list_local_ssh_keys(self) -> None:
+        ssh_dir = Path.home() / ".ssh"
+        rows: list[str] = [f"SSH directory: {ssh_dir}"]
+        if not ssh_dir.exists():
+            rows.append("目录不存在。")
+        else:
+            private_candidates = []
+            for path in sorted(ssh_dir.iterdir()):
+                if path.is_file() and not path.name.endswith(".pub") and path.name not in {"config", "known_hosts", "authorized_keys"}:
+                    private_candidates.append(path)
+            if private_candidates:
+                rows.append("\nPrivate keys:")
+                for path in private_candidates:
+                    pub = Path(str(path) + ".pub")
+                    rows.append(f"- {path}  {'✓ has .pub' if pub.exists() else '⚠ missing .pub'}")
+            else:
+                rows.append("未发现常见私钥文件。")
+            rows.append("\nPublic keys:")
+            pubs = sorted(ssh_dir.glob("*.pub"))
+            rows.extend([f"- {p}" for p in pubs] or ["未发现 .pub 公钥文件。"])
+            config = ssh_dir / "config"
+            rows.append("\nSSH config:")
+            rows.append(config.read_text(encoding="utf-8", errors="replace") if config.exists() else "~/.ssh/config 不存在。")
+        text = "\n".join(rows)
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(text)
+        self.append_log("✓ 已列出本机 SSH Key。")
+
+    def create_provider_ssh_key_from_page(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            provider = values.get("provider", "github").strip().lower() or "github"
+            account = values.get("account", "default").strip() or "default"
+            email = values.get("email", "").strip() or f"{account}@git-terminal"
+            path_text = values.get("key_path", "").strip() or self._default_ssh_key_path(provider, account)
+            overwrite = values.get("overwrite", "no").strip().lower() in {"y", "yes", "1", "true", "是"}
+            key_path = Path(path_text).expanduser()
+            key_path.parent.mkdir(parents=True, exist_ok=True)
+            if key_path.exists() and not overwrite:
+                self.append_log(f"SSH 私钥已存在，未覆盖：{key_path}")
+                pub = Path(str(key_path) + ".pub")
+                if hasattr(self, "platform_output"):
+                    self.platform_output.setPlainText(pub.read_text(encoding="utf-8", errors="replace") if pub.exists() else f"{pub} 不存在。")
+                return
+            cmd = ["ssh-keygen", "-t", "ed25519", "-C", email, "-f", str(key_path), "-N", ""]
+            def after(result: GitResult) -> None:
+                pub = Path(str(key_path) + ".pub")
+                text = result.output
+                if pub.exists():
+                    text += "\n\nPublic key; copy this to the platform SSH Keys page:\n" + pub.read_text(encoding="utf-8", errors="replace").strip()
+                if hasattr(self, "platform_output"):
+                    self.platform_output.setPlainText(text.strip() or "(no output)")
+                self.append_log(("✓" if result.ok else "✗") + f" 平台独立 SSH 私钥创建完成：{provider}/{account} -> {key_path}")
+            self.run_external_command_with_callback(cmd, after)
+        self.request_workspace_form(
+            "创建平台独立 SSH 私钥",
+            "建议每个平台、每个账号使用独立 key。默认路径会按 provider/account 生成，例如 id_ed25519_github_work。",
+            [
+                ("provider", "平台 github/gitlab/gitee", "github", False),
+                ("account", "账号标识", "default", False),
+                ("email", "Key 注释邮箱", "", False),
+                ("key_path", "SSH 私钥路径", self._default_ssh_key_path("github", "default"), False),
+                ("overwrite", "覆盖已有 key? yes/no", "no", False),
+            ],
+            submitted,
+        )
+
     def _git_config_scope_arg(self) -> str:
         widget = getattr(self, "git_config_scope", None)
         scope = widget.currentText().strip() if widget is not None else "global"
@@ -2576,6 +2951,11 @@ class MainWindow(QMainWindow):
         else:
             set_label("gitee_status_label", "Gitee 未配置。请填写 Personal Access Token 和用户/组织；Token 应优先保存到系统凭据管理器。", False)
 
+    def _terminal_environment_text(self) -> str:
+        if sys.platform.startswith("win"):
+            return "Shell: cmd.exe /d /s /c | UTF-8: chcp 65001 | decode fallback: UTF-8/GB18030/GBK/CP936"
+        return "Shell: /bin/sh -lc | UTF-8 env | decode fallback: UTF-8/locale"
+
     def _build_log_bar(self) -> None:
         self.log_bar = QWidget()
         self.log_bar.setObjectName("terminalPage")
@@ -2599,6 +2979,9 @@ class MainWindow(QMainWindow):
         input_layout.setSpacing(8)
         self.terminal_state_label = QLabel("READY")
         self.terminal_state_label.setObjectName("terminalStateLabel")
+        self.terminal_env_label = QLabel(self._terminal_environment_text())
+        self.terminal_env_label.setObjectName("terminalEnvLabel")
+        self.terminal_env_label.setToolTip(self._terminal_environment_text())
         prompt = QLabel("$ >")
         prompt.setObjectName("terminalPrompt")
         self.raw_command = QLineEdit()
@@ -2620,6 +3003,7 @@ class MainWindow(QMainWindow):
         clear_btn.setObjectName("panelAction")
         clear_btn.clicked.connect(lambda: self.command_log.clear())
         input_layout.addWidget(self.terminal_state_label)
+        input_layout.addWidget(self.terminal_env_label)
         input_layout.addWidget(prompt)
         input_layout.addWidget(self.raw_command, 1)
         input_layout.addWidget(run_btn)
@@ -2967,6 +3351,33 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.platform_output.setPlainText(str(exc))
             self.append_log("✗ " + str(exc))
+
+    def run_external_command_with_callback(self, cmd: List[str], callback: Optional[Callable[[GitResult], None]] = None, timeout: int = 120) -> None:
+        self.append_log("Will run external:\n" + " ".join(shlex.quote(x) for x in cmd))
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=self.runner.cwd(),
+                capture_output=True,
+                text=False,
+                timeout=timeout,
+                env=utf8_subprocess_env(),
+            )
+            stdout, stderr = completed_process_text(proc)
+            result = GitResult(cmd, self.runner.cwd(), proc.returncode, stdout, stderr)
+            if hasattr(self, "platform_output"):
+                self.platform_output.setPlainText(result.output.strip() or "(no output)")
+            self.append_log(("✓" if result.ok else "✗") + " " + " ".join(cmd) + "\n" + (result.output.strip() or "(no output)"))
+        except Exception as exc:
+            result = GitResult(cmd, self.runner.cwd(), 1, "", str(exc))
+            if hasattr(self, "platform_output"):
+                self.platform_output.setPlainText(str(exc))
+            self.append_log("✗ " + str(exc))
+        if callback:
+            try:
+                callback(result)
+            except Exception as exc:
+                self.append_log(f"命令回调执行失败：{exc}")
 
     def append_log(self, text: str) -> None:
         if not hasattr(self, "command_log"):
@@ -3776,10 +4187,77 @@ class MainWindow(QMainWindow):
                     self.remote_tree.addTopLevelItem(QTreeWidgetItem([remote, typ, url]))
             for i in range(3):
                 self.remote_tree.resizeColumnToContents(i)
+        self._sync_remote_tracking_fields(force=False)
 
     def _selected_remote(self) -> Optional[str]:
         item = self.remote_tree.currentItem()
         return item.text(0) if item else None
+
+    def _current_branch_name(self) -> str:
+        if not self.runner.repo_path:
+            return ""
+        result = self.runner.run(["branch", "--show-current"])
+        return result.stdout.strip() if result.ok else ""
+
+    def _sync_remote_tracking_fields(self, force: bool = False) -> None:
+        if not hasattr(self, "remote_tracking_local"):
+            return
+        current = self._current_branch_name()
+        selected_remote = self._selected_remote() or "origin"
+        if force or not self.remote_tracking_local.text().strip():
+            self.remote_tracking_local.setText(current)
+        if force or not self.remote_tracking_remote.text().strip():
+            self.remote_tracking_remote.setText(selected_remote)
+        if force or not self.remote_tracking_branch.text().strip():
+            self.remote_tracking_branch.setText(self.remote_tracking_local.text().strip() or current)
+
+    def _remote_tracking_values(self) -> tuple[str, str, str]:
+        self._sync_remote_tracking_fields(force=False)
+        local_branch = self.remote_tracking_local.text().strip() if hasattr(self, "remote_tracking_local") else self._current_branch_name()
+        remote = self.remote_tracking_remote.text().strip() if hasattr(self, "remote_tracking_remote") else (self._selected_remote() or "origin")
+        remote_branch = self.remote_tracking_branch.text().strip() if hasattr(self, "remote_tracking_branch") else local_branch
+        if not remote_branch:
+            remote_branch = local_branch
+        return local_branch, remote or "origin", remote_branch
+
+    def fetch_remote_branches_from_tracking_panel(self) -> None:
+        _, remote, _ = self._remote_tracking_values()
+        self.run_git_command(["fetch", remote, "--prune"], callback=lambda _: self.refresh_all(), timeout=300)
+
+    def show_current_upstream_from_panel(self) -> None:
+        local_branch, _, _ = self._remote_tracking_values()
+        branch = local_branch or "HEAD"
+        self.run_git_command(["rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}"], callback=self.show_result_in_log)
+
+    def track_existing_remote_branch_from_panel(self) -> None:
+        local_branch, remote, remote_branch = self._remote_tracking_values()
+        if not local_branch or not remote or not remote_branch:
+            self.append_log("Track Existing 已取消：本地分支 / remote / 远程分支不能为空。")
+            return
+
+        def after_check(result: GitResult) -> None:
+            if result.ok and result.stdout.strip():
+                self.run_git_command(["branch", "--set-upstream-to", f"{remote}/{remote_branch}", local_branch], callback=lambda _: self.refresh_all())
+                return
+            message = (
+                f"远程跟踪分支 {remote}/{remote_branch} 不存在。\n\n"
+                "Track Existing 只适用于远程分支已经存在的场景。\n"
+                "如果这是新建的本地分支，应使用 Push -u，它会创建远程分支并设置 tracking。\n\n"
+                f"是否现在执行：git push -u {remote} {local_branch} ?"
+            )
+            if QMessageBox.question(self, "远程分支不存在", message) == QMessageBox.StandardButton.Yes:
+                self.run_git_command(["push", "-u", remote, local_branch], callback=lambda _: self.refresh_all(), timeout=300)
+            else:
+                self.append_log(f"未设置 tracking：{remote}/{remote_branch} 不存在。可先 Fetch，或使用 Push -u 发布本地分支。")
+
+        self.run_git_command(["ls-remote", "--heads", remote, remote_branch], callback=after_check, timeout=300, risk_check=False)
+
+    def publish_local_branch_and_track_from_panel(self) -> None:
+        local_branch, remote, _ = self._remote_tracking_values()
+        if not local_branch or not remote:
+            self.append_log("Push -u 已取消：本地分支 / remote 不能为空。")
+            return
+        self.run_git_command(["push", "-u", remote, local_branch], callback=lambda _: self.refresh_all(), timeout=300)
 
     def add_remote(self) -> None:
         def submitted(values: dict[str, str]) -> None:
@@ -4214,7 +4692,7 @@ def decode_output(data):
             pass
     return data.decode("utf-8", errors="replace")
 
-cfg = json.loads(PAYLOAD_PLACEHOLDER)
+cfg = json.loads(PAYLOAD)
 ssh_dir = Path.home() / ".ssh"
 ssh_dir.mkdir(parents=True, exist_ok=True)
 key_path = Path(cfg["key_path"]).expanduser()
@@ -4250,7 +4728,7 @@ proc = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyCheckin
 print(decode_output(proc.stdout).strip())
 print(decode_output(proc.stderr).strip())
 print("SSH_TEST_RETURN_CODE=", proc.returncode)
-""".replace("PAYLOAD_PLACEHOLDER", payload_text)
+""".replace("PAYLOAD", payload_text)
 
     def _after_provider_ssh_setup(self, result: GitResult, provider: str, alias: str, key_path: str, remote_name: str, owner_repo: str, apply_remote: bool) -> None:
         if hasattr(self, "platform_output"):
@@ -4334,9 +4812,15 @@ print("SSH_TEST_RETURN_CODE=", proc.returncode)
             self.platform_output.setPlainText(result.output)
         self.append_log(("✓" if result.ok else "⚠") + f" 认证测试完成：SSH={ssh_target}, remote={remote_name}。")
 
-    def _powershell_encoded_command(self, script: str) -> str:
-        encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-        return f"powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}"
+    def _powershell_script_file_command(self, script: str, tool: str) -> str:
+        # Avoid Windows cmd.exe command-line length limits: write the installer
+        # script to a .ps1 file instead of passing a huge -EncodedCommand string.
+        scripts_dir = Path(tempfile.gettempdir()) / "git-terminal-installers"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        script_path = scripts_dir / f"install-{tool}-{os.getpid()}.ps1"
+        script_path.write_text(script, encoding="utf-8-sig")
+        self._cli_install_scripts.append(script_path)
+        return f"powershell.exe -NoProfile -ExecutionPolicy Bypass -File {self._shell_quote(str(script_path))}"
 
     def _windows_portable_cli_install_script(self, tool: str) -> str:
         exe = "gh.exe" if tool == "gh" else "glab.exe"
@@ -4443,7 +4927,7 @@ exit $LASTEXITCODE
                 manager, install = candidates[0]
                 return f"{install} && {tool} --version", f"未检测到 {tool}；检测到 {manager}，将只使用该安装器安装。"
             script = self._windows_portable_cli_install_script(tool)
-            return self._powershell_encoded_command(script), f"未检测到 {tool}，且没有 winget / choco / scoop；将从官方 release 下载 Windows zip 并安装到当前用户目录。"
+            return self._powershell_script_file_command(script, tool), f"未检测到 {tool}，且没有 winget / choco / scoop；将从官方 release 下载 Windows zip 并安装到当前用户目录。PowerShell 脚本已写入临时 .ps1，避免 cmd 命令行过长。"
 
         if sys.platform == "darwin":
             if not shutil.which("brew"):

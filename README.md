@@ -268,3 +268,23 @@ git_terminal_project/
 - 新增 VS Code 风格底部状态行，原本显示在工作区顶部的仓库、分支、HEAD、远程、Upstream、Ahead/Behind、Dirty、Mode 等信息已全部移到底部。
 - 底部状态行增加更细的状态拆分：暂存数量、工作区修改数量、未跟踪数量、冲突数量、Push 目标、Local 路径、Git 版本。
 - Push URL、Local 路径、仓库路径等长文本会在状态行中缩短显示，完整信息保留在 tooltip 中；HTTPS URL 中的明文凭据会在状态行中脱敏。
+
+## v0.8.6 Status / Config / CLI fixes
+
+- 底部状态行不再使用主题强调色：深色模式使用深灰，浅色模式使用浅灰。
+- Git config 列表支持直接双击编辑 Key / Value；修改后自动执行对应 `git config --<scope>`，失败时回滚界面。
+- 修复 Custom 按钮点击时 PyQt `clicked(bool)` 覆盖命令字符串导致的闪退。
+- Windows 无包管理器安装 `gh` / `glab` 时，不再使用超长 `PowerShell -EncodedCommand`；改为写入临时 `.ps1` 后通过 `powershell.exe -File` 执行，避免 `命令行太长`。
+
+## v0.8.7 Proxy clear behavior
+
+- Git 代理配置不再把“key 不存在”误判为失败：清空 `http.proxy` / `https.proxy` / `http.noProxy` 时会先检测是否存在。
+- 不存在的代理项会显示“未配置，无需删除”，存在的项才执行 `git config --unset-all`。
+- 代理设置/清空流程改为逐项执行，最后单独列出当前作用域的 Git config，避免无害返回码污染整个操作结果。
+
+## v0.8.8 Remote tracking panel
+
+- 远程页顶部新增固定的 `Tracking / Upstream` 面板，不再把跟踪分支入口藏在按钮网格或滚动区域里。
+- 新增独立按钮：`Track existing remote branch` 和 `Publish local branch + track (Push -u)`。
+- 当远程分支不存在时，`Track existing` 会提示改用 `Push -u`，并可直接确认执行 `git push -u <remote> <local-branch>`。
+- 右侧 ACTIONS > Remote 也新增 `Track Existing` 和 `Push -u` 快捷入口。

@@ -46,6 +46,10 @@ PALETTES = {
 def build_qss(mode: str = "dark", accent_name: str = "blue") -> str:
     p = PALETTES.get(mode, PALETTES["dark"])
     accent = ACCENTS.get(accent_name, ACCENTS["blue"])
+    status_bg = "#2d2d2d" if mode == "dark" else "#e5e5e5"
+    status_text = p["text"]
+    status_hover = "#3a3a3a" if mode == "dark" else "#d8d8d8"
+    status_border = "#3f3f46" if mode == "dark" else "#cfcfcf"
     return f"""
 * {{
     font-family: "Segoe UI", "Microsoft YaHei UI", Arial;
@@ -365,18 +369,18 @@ QLabel#RepoTargetLabel {{
 }}
 
 QFrame#statusStrip {{
-    background-color: {accent};
-    border-top: 1px solid {p['border']};
+    background-color: {status_bg};
+    border-top: 1px solid {status_border};
 }}
 QLabel#statusSegment, QLabel#statusPathSegment {{
     background-color: transparent;
-    color: #ffffff;
-    border-right: 1px solid rgba(255, 255, 255, 45);
+    color: {status_text};
+    border-right: 1px solid {status_border};
     padding: 0 8px;
     font-size: 12px;
 }}
 QLabel#statusSegment:hover, QLabel#statusPathSegment:hover {{
-    background-color: rgba(255, 255, 255, 28);
+    background-color: {status_hover};
 }}
 QLabel#statusPathSegment {{
     font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace;
@@ -505,6 +509,13 @@ QLabel#terminalStateLabel {{
     font-family: Consolas;
     font-size: 11px;
     font-weight: 700;
+}}
+
+QLabel#terminalEnvLabel {{
+    color: {p['muted']};
+    font-family: Consolas;
+    font-size: 11px;
+    padding: 0 4px;
 }}
 
 QFrame#terminalPromptOverlay {{
