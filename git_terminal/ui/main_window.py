@@ -54,6 +54,7 @@ from git_terminal.core.runner import GitRunner
 from git_terminal.core.safety import classify_git_command
 from git_terminal.ui.workers import GitCommandWorker, ShellCommandWorker
 from git_terminal.ui.theme import ACCENTS, apply_theme
+from git_terminal.i18n import LANGUAGE_MODES, LanguageService, make_key
 from git_terminal.ui.commit_graph import CommitGraphView, GraphCommit
 from git_terminal.ui.vscode_shell import ActivityBar, BottomPanel, SidePanel, TopCommandBar
 
@@ -113,6 +114,9 @@ class MainWindow(QMainWindow):
         self.resize(1040, 620)
         self.runner = GitRunner()
         self.config_path = self._default_config_path()
+        base_config = self._load_config()
+        self.language_mode = str(base_config.get("language_mode", "default"))
+        self.language = LanguageService(self.language_mode)
         self.recent_repositories = self._load_recent_repositories()
         self.command_catalog = build_command_catalog()
         self._threads: List[Tuple[QThread, GitCommandWorker]] = []
@@ -136,6 +140,7 @@ class MainWindow(QMainWindow):
         if app is not None:
             apply_theme(app, self, self.theme_mode, self.theme_accent)
         self._apply_activity_icon_theme()
+        self.apply_language()
         self.detect_environment()
         self.refresh_all()
 
@@ -933,20 +938,30 @@ class MainWindow(QMainWindow):
 
     def show_settings_menu(self) -> None:
         menu = QMenu(self)
-        theme_menu = menu.addMenu("主题")
-        dark = theme_menu.addAction("深色模式")
-        light = theme_menu.addAction("浅色模式")
+        theme_menu = menu.addMenu(self.t("settings.theme", "主题"))
+        dark = theme_menu.addAction(self.t("settings.theme.dark", "深色模式"))
+        light = theme_menu.addAction(self.t("settings.theme.light", "浅色模式"))
         dark.triggered.connect(lambda: self.change_theme_mode("dark"))
         light.triggered.connect(lambda: self.change_theme_mode("light"))
-        accent_menu = menu.addMenu("配色")
+        accent_menu = menu.addMenu(self.t("settings.accent", "配色"))
         for key, label in [("blue", "蓝色"), ("purple", "紫色"), ("green", "绿色"), ("orange", "橙色")]:
-            accent_menu.addAction(label, lambda _checked=False, k=key: self.change_theme_accent(k))
+            accent_menu.addAction(self.t(f"settings.accent.{key}", label), lambda _checked=False, k=key: self.change_theme_accent(k))
+        language_menu = menu.addMenu(self.t("settings.language", "语言"))
+        language_group = QActionGroup(self)
+        language_group.setExclusive(True)
+        for key, label in [("zh", "中文"), ("en", "English"), ("default", "默认 / Default"), ("all", "中文 + English")]:
+            action = QAction(self.t(f"settings.language.{key}", label), self)
+            action.setCheckable(True)
+            action.setChecked(self.language_mode == key)
+            action.triggered.connect(lambda _checked=False, k=key: self.change_language_mode(k))
+            language_group.addAction(action)
+            language_menu.addAction(action)
         menu.addSeparator()
-        menu.addAction("显示左侧栏", lambda: self.set_left_sidebar_visible(True))
-        menu.addAction("显示右侧栏", lambda: self.set_right_sidebar_visible(True))
-        menu.addAction("显示底部栏", lambda: self.set_bottom_panel_visible(True))
+        menu.addAction(self.t("settings.show_left", "显示左侧栏"), lambda: self.set_left_sidebar_visible(True))
+        menu.addAction(self.t("settings.show_right", "显示右侧栏"), lambda: self.set_right_sidebar_visible(True))
+        menu.addAction(self.t("settings.show_bottom", "显示底部栏"), lambda: self.set_bottom_panel_visible(True))
         menu.addSeparator()
-        menu.addAction("关于 Git Terminal", self.show_about)
+        menu.addAction(self.t("settings.about", "关于 Git Terminal"), self.show_about)
         button = getattr(self.activity_bar, "settings_button", None)
         if button is not None:
             menu_size = menu.sizeHint()
@@ -957,6 +972,104 @@ class MainWindow(QMainWindow):
             menu.exec(QPoint(x, y))
         else:
             menu.exec(self.mapToGlobal(self.rect().center()))
+
+    # ------------------------------------------------------------------
+    # Language / internationalization
+    # ------------------------------------------------------------------
+    def t(self, key: str, default_text: str = "") -> str:
+        return self.language.text(key, default_text) if hasattr(self, "language") else default_text
+
+    def _is_translatable_text(self, text: str) -> bool:
+        if not text:
+            return False
+        stripped = text.strip()
+        if not stripped:
+            return False
+        if stripped in {"▣", "▢", "⌄", "▔", "◧", "◨", "⟳", "⋯", "$ >", "‹", "›"}:
+            return False
+        # Do not translate pure hashes / object names / CSS-ish tokens.
+        if stripped.startswith("#") or stripped.startswith("_"):
+            return False
+        return True
+
+    def _language_key(self, default_text: str, prefix: str = "ui") -> str:
+        return make_key(default_text, prefix)
+
+    def _apply_text_property(self, obj, getter, setter, prop_name: str, prefix: str) -> None:
+        try:
+            current = getter()
+        except Exception:
+            return
+        if not self._is_translatable_text(current):
+            return
+        default = obj.property(prop_name)
+        if not default:
+            default = current
+            obj.setProperty(prop_name, default)
+        key_prop = prop_name + "_key"
+        key = obj.property(key_prop)
+        if not key:
+            key = self._language_key(str(default), prefix)
+            obj.setProperty(key_prop, key)
+        try:
+            setter(self.t(str(key), str(default)))
+        except Exception:
+            return
+
+    def apply_language(self) -> None:
+        """Apply configured UI language to registered static text.
+
+        Widgets keep their original text in dynamic properties, so switching
+        zh/en/default/all does not lose the default mixed-language text.
+        New or third-party text without an entry is automatically appended to
+        ~/.git_terminal/language_config.json with zh/en/default/all values.
+        """
+        if not hasattr(self, "language"):
+            return
+        self.language.set_mode(getattr(self, "language_mode", "default"))
+        # Window title.
+        self._apply_text_property(self, self.windowTitle, self.setWindowTitle, "i18n_window_title", "window")
+        # Actions, including menu actions.
+        for action in self.findChildren(QAction):
+            self._apply_text_property(action, action.text, action.setText, "i18n_action_text", "action")
+            self._apply_text_property(action, action.toolTip, action.setToolTip, "i18n_action_tooltip", "tooltip")
+        # Widgets.
+        for widget in self.findChildren(QWidget):
+            # QLineEdit.text() is user data, not static UI text. Only its placeholder is localized.
+            if not isinstance(widget, QLineEdit) and hasattr(widget, "text") and hasattr(widget, "setText"):
+                self._apply_text_property(widget, widget.text, widget.setText, "i18n_widget_text", "widget")
+            if hasattr(widget, "title") and hasattr(widget, "setTitle"):
+                self._apply_text_property(widget, widget.title, widget.setTitle, "i18n_widget_title", "title")
+            if hasattr(widget, "placeholderText") and hasattr(widget, "setPlaceholderText"):
+                self._apply_text_property(widget, widget.placeholderText, widget.setPlaceholderText, "i18n_placeholder", "placeholder")
+            if hasattr(widget, "toolTip") and hasattr(widget, "setToolTip"):
+                self._apply_text_property(widget, widget.toolTip, widget.setToolTip, "i18n_widget_tooltip", "tooltip")
+            if isinstance(widget, QTabWidget):
+                defaults = widget.property("i18n_tab_defaults")
+                if not isinstance(defaults, list) or len(defaults) != widget.count():
+                    defaults = [widget.tabText(i) for i in range(widget.count())]
+                    widget.setProperty("i18n_tab_defaults", defaults)
+                keys = widget.property("i18n_tab_keys")
+                if not isinstance(keys, list) or len(keys) != widget.count():
+                    keys = [self._language_key(str(defaults[i]), "tab") for i in range(widget.count())]
+                    widget.setProperty("i18n_tab_keys", keys)
+                for i in range(widget.count()):
+                    default = str(defaults[i])
+                    if self._is_translatable_text(default):
+                        widget.setTabText(i, self.t(str(keys[i]), default))
+        # Update checked language actions if a settings menu/action is currently alive.
+        self.language.flush()
+
+    def change_language_mode(self, mode: str) -> None:
+        if mode not in LANGUAGE_MODES:
+            mode = "default"
+        self.language_mode = mode
+        self.language.set_mode(mode)
+        config = self._load_config()
+        config["language_mode"] = mode
+        self._save_config(config)
+        self.apply_language()
+        self.append_log(f"语言已切换：{LANGUAGE_MODES.get(mode, mode)}")
 
     def _field_suggestions(self, key: str, label: str) -> list[str]:
         text = f"{key} {label}".lower()
@@ -990,8 +1103,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "terminal_stack") and hasattr(self, "terminal_content"):
             self.terminal_stack.setCurrentWidget(self.terminal_content)
         self.workspace_prompt_callback = callback
-        self.workspace_prompt_title.setText(title)
-        self.workspace_prompt_message.setText(message)
+        self.workspace_prompt_title.setText(self.t(self._language_key(title, "prompt.title"), title))
+        self.workspace_prompt_message.setText(self.t(self._language_key(message, "prompt.message"), message))
         self._clear_workspace_prompt_form()
         self.workspace_prompt_fields = {}
         first_input = None
@@ -1013,7 +1126,8 @@ class MainWindow(QMainWindow):
                 edit.setEchoMode(QLineEdit.EchoMode.Password if password else QLineEdit.EchoMode.Normal)
                 edit.returnPressed.connect(self._submit_workspace_prompt)
                 edit.setMinimumHeight(34)
-            self.workspace_prompt_form.addRow(label, edit)
+            translated_label = self.t(self._language_key(label, "prompt.label"), label)
+            self.workspace_prompt_form.addRow(translated_label, edit)
             self.workspace_prompt_fields[key] = edit
             if first_input is None:
                 first_input = edit

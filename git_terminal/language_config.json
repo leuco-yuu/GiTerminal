@@ -1,0 +1,1256 @@
+{
+  "settings.about": {
+    "all": "关于 Git Terminal (About Git Terminal)",
+    "default": "关于 Git Terminal",
+    "en": "About Git Terminal",
+    "zh": "关于 Git Terminal"
+  },
+  "settings.accent": {
+    "all": "配色 (Accent Color)",
+    "default": "配色",
+    "en": "Accent Color",
+    "zh": "配色"
+  },
+  "settings.accent.blue": {
+    "all": "蓝色 (Blue)",
+    "default": "蓝色",
+    "en": "Blue",
+    "zh": "蓝色"
+  },
+  "settings.accent.green": {
+    "all": "绿色 (Green)",
+    "default": "绿色",
+    "en": "Green",
+    "zh": "绿色"
+  },
+  "settings.accent.orange": {
+    "all": "橙色 (Orange)",
+    "default": "橙色",
+    "en": "Orange",
+    "zh": "橙色"
+  },
+  "settings.accent.purple": {
+    "all": "紫色 (Purple)",
+    "default": "紫色",
+    "en": "Purple",
+    "zh": "紫色"
+  },
+  "settings.language": {
+    "all": "语言 (Language)",
+    "default": "语言",
+    "en": "Language",
+    "zh": "语言"
+  },
+  "settings.language.all": {
+    "all": "中英双语 (Chinese + English)",
+    "default": "中文 + English",
+    "en": "Chinese + English",
+    "zh": "中英双语"
+  },
+  "settings.language.default": {
+    "all": "默认 (Default)",
+    "default": "默认 / Default",
+    "en": "Default",
+    "zh": "默认"
+  },
+  "settings.language.en": {
+    "all": "英文 (English)",
+    "default": "English",
+    "en": "English",
+    "zh": "英文"
+  },
+  "settings.language.zh": {
+    "all": "中文 (Chinese)",
+    "default": "中文",
+    "en": "Chinese",
+    "zh": "中文"
+  },
+  "settings.show_bottom": {
+    "all": "显示底部栏 (Show Bottom Panel)",
+    "default": "显示底部栏",
+    "en": "Show Bottom Panel",
+    "zh": "显示底部栏"
+  },
+  "settings.show_left": {
+    "all": "显示左侧栏 (Show Left Sidebar)",
+    "default": "显示左侧栏",
+    "en": "Show Left Sidebar",
+    "zh": "显示左侧栏"
+  },
+  "settings.show_right": {
+    "all": "显示右侧栏 (Show Right Sidebar)",
+    "default": "显示右侧栏",
+    "en": "Show Right Sidebar",
+    "zh": "显示右侧栏"
+  },
+  "settings.theme": {
+    "all": "主题 (Theme)",
+    "default": "主题",
+    "en": "Theme",
+    "zh": "主题"
+  },
+  "settings.theme.dark": {
+    "all": "深色模式 (Dark Mode)",
+    "default": "深色模式",
+    "en": "Dark Mode",
+    "zh": "深色模式"
+  },
+  "settings.theme.light": {
+    "all": "浅色模式 (Light Mode)",
+    "default": "浅色模式",
+    "en": "Light Mode",
+    "zh": "浅色模式"
+  },
+  "ui.accounts.36bae316": {
+    "all": "Accounts",
+    "default": "Accounts",
+    "en": "Accounts",
+    "zh": "Accounts"
+  },
+  "ui.actions.bbb86bcb": {
+    "all": "ACTIONS",
+    "default": "ACTIONS",
+    "en": "ACTIONS",
+    "zh": "ACTIONS"
+  },
+  "ui.actions_user_name_user_email_refresh_statu.5e1291cc": {
+    "all": "配置按钮位于右侧 ACTIONS：设置 user.name / user.email、刷新 状态、Credential Helper、各平台登录检查。 (配置按钮位于右侧 ACTIONS：设置 user.name / user.email、Refresh Status、Credential Helper、各Platform登录检查。)",
+    "default": "配置按钮位于右侧 ACTIONS：设置 user.name / user.email、Refresh Status、Credential Helper、各平台登录检查。",
+    "en": "配置按钮位于右侧 ACTIONS：设置 user.name / user.email、Refresh Status、Credential Helper、各Platform登录检查。",
+    "zh": "配置按钮位于右侧 ACTIONS：设置 user.name / user.email、刷新 状态、Credential Helper、各平台登录检查。"
+  },
+  "ui.add_all_commit.df3d41ef": {
+    "all": "添加全部并提交... (Add All + Commit...)",
+    "default": "Add All + Commit...",
+    "en": "Add All + Commit...",
+    "zh": "添加全部并提交..."
+  },
+  "ui.all_prune_origin_main.e50f4419": {
+    "all": "参数，例如 --all --prune 或 origin main (Arguments，例如 --all --prune 或 origin main)",
+    "default": "参数，例如 --all --prune 或 origin main",
+    "en": "Arguments，例如 --all --prune 或 origin main",
+    "zh": "参数，例如 --all --prune 或 origin main"
+  },
+  "ui.amend_no_edit.7543afcc": {
+    "all": "Amend --no-edit",
+    "default": "Amend --no-edit",
+    "en": "Amend --no-edit",
+    "zh": "Amend --no-edit"
+  },
+  "ui.bisect_bad.eab478a6": {
+    "all": "Bisect Bad...",
+    "default": "Bisect Bad...",
+    "en": "Bisect Bad...",
+    "zh": "Bisect Bad..."
+  },
+  "ui.bisect_good.71d493df": {
+    "all": "Bisect Good...",
+    "default": "Bisect Good...",
+    "en": "Bisect Good...",
+    "zh": "Bisect Good..."
+  },
+  "ui.bisect_reset.5c7f8360": {
+    "all": "Bisect Reset",
+    "default": "Bisect Reset",
+    "en": "Bisect Reset",
+    "zh": "Bisect Reset"
+  },
+  "ui.bisect_start.70263be7": {
+    "all": "Bisect Start",
+    "default": "Bisect Start",
+    "en": "Bisect Start",
+    "zh": "Bisect Start"
+  },
+  "ui.checkout_ctrl.0b8347a3": {
+    "all": "提示：悬浮节点看信息，单击看详情，双击 checkout，右键更多操作；Ctrl+滚轮缩放。",
+    "default": "提示：悬浮节点看信息，单击看详情，双击 checkout，右键更多操作；Ctrl+滚轮缩放。",
+    "en": "提示：悬浮节点看信息，单击看详情，双击 checkout，右键更多操作；Ctrl+滚轮缩放。",
+    "zh": "提示：悬浮节点看信息，单击看详情，双击 checkout，右键更多操作；Ctrl+滚轮缩放。"
+  },
+  "ui.checkout_this_commit.b18fd131": {
+    "all": "检出 this commit (Checkout this commit)",
+    "default": "Checkout this commit",
+    "en": "Checkout this commit",
+    "zh": "检出 this commit"
+  },
+  "ui.cherry_pick_into_current_branch.0a459dda": {
+    "all": "拣选 into current branch (Cherry-pick into current branch)",
+    "default": "Cherry-pick into current branch",
+    "en": "Cherry-pick into current branch",
+    "zh": "拣选 into current branch"
+  },
+  "ui.clean_fd.daa24986": {
+    "all": "清理 -fd (Clean -fd)",
+    "default": "Clean -fd",
+    "en": "Clean -fd",
+    "zh": "清理 -fd"
+  },
+  "ui.clear.719ea396": {
+    "all": "清空 (Clear)",
+    "default": "Clear",
+    "en": "Clear",
+    "zh": "清空"
+  },
+  "ui.clone.ec89e9ca": {
+    "all": "Clone 远程仓库... (Clone Remote Repository...)",
+    "default": "Clone 远程仓库...",
+    "en": "Clone Remote Repository...",
+    "zh": "Clone 远程仓库..."
+  },
+  "ui.clone_repository.6d15c03a": {
+    "all": "Clone 仓库 (Clone Repository)",
+    "default": "Clone Repository",
+    "en": "Clone Repository",
+    "zh": "Clone 仓库"
+  },
+  "ui.commit_only.3f336d62": {
+    "all": "仅提交... (Commit Only...)",
+    "default": "Commit Only...",
+    "en": "Commit Only...",
+    "zh": "仅提交..."
+  },
+  "ui.compare_with_current_branch.94249beb": {
+    "all": "Compare with current branch",
+    "default": "Compare with current branch",
+    "en": "Compare with current branch",
+    "zh": "Compare with current branch"
+  },
+  "ui.compare_with_head.776fce24": {
+    "all": "Compare with HEAD",
+    "default": "Compare with HEAD",
+    "en": "Compare with HEAD",
+    "zh": "Compare with HEAD"
+  },
+  "ui.config_hooks_lfs_submodule.fe4bcd1b": {
+    "all": "Config / Hooks / LFS / Submodule 快捷入口",
+    "default": "Config / Hooks / LFS / Submodule 快捷入口",
+    "en": "Config / Hooks / LFS / Submodule 快捷入口",
+    "zh": "Config / Hooks / LFS / Submodule 快捷入口"
+  },
+  "ui.copy_branch_name.5d745080": {
+    "all": "复制 branch name (Copy branch name)",
+    "default": "Copy branch name",
+    "en": "Copy branch name",
+    "zh": "复制 branch name"
+  },
+  "ui.copy_commit_hash.359d69e2": {
+    "all": "复制 commit hash (Copy commit hash)",
+    "default": "Copy commit hash",
+    "en": "Copy commit hash",
+    "zh": "复制 commit hash"
+  },
+  "ui.count_objects_vh.4cd6f085": {
+    "all": "count-objects -vH",
+    "default": "count-objects -vH",
+    "en": "count-objects -vH",
+    "zh": "count-objects -vH"
+  },
+  "ui.create_branch_here.e2c6d960": {
+    "all": "Create branch here",
+    "default": "Create branch here",
+    "en": "Create branch here",
+    "zh": "Create branch here"
+  },
+  "ui.default.62d232f9": {
+    "all": "默认 / Default",
+    "default": "默认 / Default",
+    "en": "默认 / Default",
+    "zh": "默认 / Default"
+  },
+  "ui.delete_branch.5478e60c": {
+    "all": "删除 branch (Delete branch)",
+    "default": "Delete branch",
+    "en": "Delete branch",
+    "zh": "删除 branch"
+  },
+  "ui.diff.d23a1c9f": {
+    "all": "差异 (Diff)",
+    "default": "Diff",
+    "en": "Diff",
+    "zh": "差异"
+  },
+  "ui.diff_staged.b090262b": {
+    "all": "差异 --staged (Diff --staged)",
+    "default": "Diff --staged",
+    "en": "Diff --staged",
+    "zh": "差异 --staged"
+  },
+  "ui.english.649df08a": {
+    "all": "English",
+    "default": "English",
+    "en": "English",
+    "zh": "English"
+  },
+  "ui.english.ce89e50d": {
+    "all": "中文 + English",
+    "default": "中文 + English",
+    "en": "中文 + English",
+    "zh": "中文 + English"
+  },
+  "ui.fetch.c08b6e81": {
+    "all": "Fetch 后刷新图 (Fetch 后Refresh Graph)",
+    "default": "Fetch 后刷新图",
+    "en": "Fetch 后Refresh Graph",
+    "zh": "Fetch 后刷新图"
+  },
+  "ui.fetch.d48aafe6": {
+    "all": "Fetch",
+    "default": "Fetch",
+    "en": "Fetch",
+    "zh": "Fetch"
+  },
+  "ui.fetch_all_prune.9e806959": {
+    "all": "Fetch --all --prune",
+    "default": "Fetch --all --prune",
+    "en": "Fetch --all --prune",
+    "zh": "Fetch --all --prune"
+  },
+  "ui.fsck_full.958428ee": {
+    "all": "fsck --full",
+    "default": "fsck --full",
+    "en": "fsck --full",
+    "zh": "fsck --full"
+  },
+  "ui.gc.ec6d9083": {
+    "all": "gc",
+    "default": "gc",
+    "en": "gc",
+    "zh": "gc"
+  },
+  "ui.git.bcefc8ad": {
+    "all": "全部 Git 命令 (All Git Commands)",
+    "default": "全部 Git 命令",
+    "en": "All Git Commands",
+    "zh": "全部 Git 命令"
+  },
+  "ui.git_add_a.424e320a": {
+    "all": "git add -A / 添加全部 (git add -A / Add All)",
+    "default": "git add -A / 添加全部",
+    "en": "git add -A / Add All",
+    "zh": "git add -A / 添加全部"
+  },
+  "ui.git_diff_git_diff_staged.3eccb234": {
+    "all": "选择文件后显示 git diff / git diff --staged (选择File后显示 git diff / git diff --staged)",
+    "default": "选择文件后显示 git diff / git diff --staged",
+    "en": "选择File后显示 git diff / git diff --staged",
+    "zh": "选择文件后显示 git diff / git diff --staged"
+  },
+  "ui.git_git_help_a_git.99dc90a9": {
+    "all": "完整 Git 命令入口：从本机 git help -a 动态发现命令，并叠加内置常用选项。任何 Git 子命令都可以在这里带参数执行。 (完整 Git Command入口：从本机 git help -a 动态发现Command，并叠加内置常用选项。任何 Git 子Command都可以在这里带Arguments执行。)",
+    "default": "完整 Git 命令入口：从本机 git help -a 动态发现命令，并叠加内置常用选项。任何 Git 子命令都可以在这里带参数执行。",
+    "en": "完整 Git Command入口：从本机 git help -a 动态发现Command，并叠加内置常用选项。任何 Git 子Command都可以在这里带Arguments执行。",
+    "zh": "完整 Git 命令入口：从本机 git help -a 动态发现命令，并叠加内置常用选项。任何 Git 子命令都可以在这里带参数执行。"
+  },
+  "ui.git_github_com_org_repo_git_https.2ca0908a": {
+    "all": "git@github.com:org/repo.git 或 https://...",
+    "default": "git@github.com:org/repo.git 或 https://...",
+    "en": "git@github.com:org/repo.git 或 https://...",
+    "zh": "git@github.com:org/repo.git 或 https://..."
+  },
+  "ui.git_identity.8a9c1dda": {
+    "all": "Git Identity",
+    "default": "Git Identity",
+    "en": "Git Identity",
+    "zh": "Git Identity"
+  },
+  "ui.git_identity_credential_helper_github_gitl.b3f14b01": {
+    "all": "用户与账号配置：这里集中展示 Git identity、credential helper，以及 GitHub/GitLab/Gitee 配置入口。",
+    "default": "用户与账号配置：这里集中展示 Git identity、credential helper，以及 GitHub/GitLab/Gitee 配置入口。",
+    "en": "用户与账号配置：这里集中展示 Git identity、credential helper，以及 GitHub/GitLab/Gitee 配置入口。",
+    "zh": "用户与账号配置：这里集中展示 Git identity、credential helper，以及 GitHub/GitLab/Gitee 配置入口。"
+  },
+  "ui.git_identity_refresh_status.bbe5513c": {
+    "all": "Git identity: 点击右侧 刷新 状态 或仓库刷新后检测。 (Git identity: 点击右侧 Refresh Status 或Repository刷新后检测。)",
+    "default": "Git identity: 点击右侧 Refresh Status 或仓库刷新后检测。",
+    "en": "Git identity: 点击右侧 Refresh Status 或Repository刷新后检测。",
+    "zh": "Git identity: 点击右侧 刷新 状态 或仓库刷新后检测。"
+  },
+  "ui.git_pr_mr_issue_release_ci.2731d59c": {
+    "all": "平台能力是增强模块：本地 Git 功能无需登录。这里按平台分区展示初始化配置、仓库、PR/MR、Issue、Release、CI 和高级配置入口；命令执行仍保持透明输出。 (Platform能力是增强模块：本地 Git 功能无需登录。这里按Platform分区展示初始化配置、Repository、PR/MR、Issue、Release、CI 和Advanced Configuration入口；Command执行仍保持透明输出。)",
+    "default": "平台能力是增强模块：本地 Git 功能无需登录。这里按平台分区展示初始化配置、仓库、PR/MR、Issue、Release、CI 和高级配置入口；命令执行仍保持透明输出。",
+    "en": "Platform能力是增强模块：本地 Git 功能无需登录。这里按Platform分区展示初始化配置、Repository、PR/MR、Issue、Release、CI 和Advanced Configuration入口；Command执行仍保持透明输出。",
+    "zh": "平台能力是增强模块：本地 Git 功能无需登录。这里按平台分区展示初始化配置、仓库、PR/MR、Issue、Release、CI 和高级配置入口；命令执行仍保持透明输出。"
+  },
+  "ui.git_status_sb_python_version_dir_ls.a7ff50f5": {
+    "all": "输入任意命令，例如：git status -sb / python --version / dir / ls (Enter any command, e.g. git status -sb / python --version / dir / ls)",
+    "default": "输入任意命令，例如：git status -sb / python --version / dir / ls",
+    "en": "Enter any command, e.g. git status -sb / python --version / dir / ls",
+    "zh": "输入任意命令，例如：git status -sb / python --version / dir / ls"
+  },
+  "ui.git_terminal.6c3c4318": {
+    "all": "GIT TERMINAL",
+    "default": "GIT TERMINAL",
+    "en": "GIT TERMINAL",
+    "zh": "GIT TERMINAL"
+  },
+  "ui.git_terminal.6d1a35a3": {
+    "all": "Git 终端 (Git Terminal)",
+    "default": "Git Terminal",
+    "en": "Git Terminal",
+    "zh": "Git 终端"
+  },
+  "ui.git_terminal.abdfb560": {
+    "all": "关于 Git 终端 (About Git Terminal)",
+    "default": "关于 Git Terminal",
+    "en": "About Git Terminal",
+    "zh": "关于 Git 终端"
+  },
+  "ui.gitee.1e3088ba": {
+    "all": "Gitee",
+    "default": "Gitee",
+    "en": "Gitee",
+    "zh": "Gitee"
+  },
+  "ui.gitee.9f231fcf": {
+    "all": "Gitee 初始化配置",
+    "default": "Gitee 初始化配置",
+    "en": "Gitee 初始化配置",
+    "zh": "Gitee 初始化配置"
+  },
+  "ui.gitee_token_keychain.d1749e04": {
+    "all": "Gitee 支持 Token / 用户名配置。生产环境应接入系统 Keychain，本版本仅作为当前会话输入和命令透明测试入口。 (Gitee 支持 Token / 用户名配置。生产环境应接入系统 Keychain，本版本仅作为当前会话输入和Command透明测试入口。)",
+    "default": "Gitee 支持 Token / 用户名配置。生产环境应接入系统 Keychain，本版本仅作为当前会话输入和命令透明测试入口。",
+    "en": "Gitee 支持 Token / 用户名配置。生产环境应接入系统 Keychain，本版本仅作为当前会话输入和Command透明测试入口。",
+    "zh": "Gitee 支持 Token / 用户名配置。生产环境应接入系统 Keychain，本版本仅作为当前会话输入和命令透明测试入口。"
+  },
+  "ui.gitee_token_token_refresh_status_gitee_rep.e07af6d0": {
+    "all": "Gitee: 未配置 Token。请填写 Token 和用户/组织后点击右侧 刷新 状态 或 Gitee repos。 (Gitee: 未配置 Token。请填写 Token 和User / Organization后点击右侧 Refresh Status 或 Gitee repos。)",
+    "default": "Gitee: 未配置 Token。请填写 Token 和用户/组织后点击右侧 Refresh Status 或 Gitee repos。",
+    "en": "Gitee: 未配置 Token。请填写 Token 和User / Organization后点击右侧 Refresh Status 或 Gitee repos。",
+    "zh": "Gitee: 未配置 Token。请填写 Token 和用户/组织后点击右侧 刷新 状态 或 Gitee repos。"
+  },
+  "ui.github.5442e2b6": {
+    "all": "GitHub",
+    "default": "GitHub",
+    "en": "GitHub",
+    "zh": "GitHub"
+  },
+  "ui.github.791b2e8f": {
+    "all": "创建 GitHub 远程仓库... (Create GitHub Remote Repository...)",
+    "default": "创建 GitHub 远程仓库...",
+    "en": "Create GitHub Remote Repository...",
+    "zh": "创建 GitHub 远程仓库..."
+  },
+  "ui.github_auth_status.ec31a2c7": {
+    "all": "GitHub auth status",
+    "default": "GitHub auth status",
+    "en": "GitHub auth status",
+    "zh": "GitHub auth status"
+  },
+  "ui.github_create_repo.d52e76ff": {
+    "all": "GitHub create repo...",
+    "default": "GitHub create repo...",
+    "en": "GitHub create repo...",
+    "zh": "GitHub create repo..."
+  },
+  "ui.github_gh.bdaa21ff": {
+    "all": "GitHub: 正在检测 gh 登录状态...",
+    "default": "GitHub: 正在检测 gh 登录状态...",
+    "en": "GitHub: 正在检测 gh 登录状态...",
+    "zh": "GitHub: 正在检测 gh 登录状态..."
+  },
+  "ui.github_gh_cli_gh_auth_login_gh_auth_setup_.47c4d8a0": {
+    "all": "GitHub 建议使用 gh CLI。初始化配置会调用 gh auth login / gh auth setup-git；仓库和协作功能通过 gh 命令执行。 (GitHub 建议使用 gh CLI。初始化配置会调用 gh auth login / gh auth setup-git；Repository和协作功能通过 gh Command执行。)",
+    "default": "GitHub 建议使用 gh CLI。初始化配置会调用 gh auth login / gh auth setup-git；仓库和协作功能通过 gh 命令执行。",
+    "en": "GitHub 建议使用 gh CLI。初始化配置会调用 gh auth login / gh auth setup-git；Repository和协作功能通过 gh Command执行。",
+    "zh": "GitHub 建议使用 gh CLI。初始化配置会调用 gh auth login / gh auth setup-git；仓库和协作功能通过 gh 命令执行。"
+  },
+  "ui.github_repo_list.fdd2d411": {
+    "all": "GitHub repo list",
+    "default": "GitHub repo list",
+    "en": "GitHub repo list",
+    "zh": "GitHub repo list"
+  },
+  "ui.gitlab.9a9b09d9": {
+    "all": "GitLab",
+    "default": "GitLab",
+    "en": "GitLab",
+    "zh": "GitLab"
+  },
+  "ui.gitlab_auth_status.f9fe7b85": {
+    "all": "GitLab auth status",
+    "default": "GitLab auth status",
+    "en": "GitLab auth status",
+    "zh": "GitLab auth status"
+  },
+  "ui.gitlab_glab.a50596b1": {
+    "all": "GitLab: 正在检测 glab 登录状态...",
+    "default": "GitLab: 正在检测 glab 登录状态...",
+    "en": "GitLab: 正在检测 glab 登录状态...",
+    "zh": "GitLab: 正在检测 glab 登录状态..."
+  },
+  "ui.gitlab_glab_cli_mr_issue_pipeline_release.767b26a5": {
+    "all": "GitLab 建议使用 glab CLI。支持认证、项目列表、MR、Issue、Pipeline、Release 等常用入口。 (GitLab 建议使用 glab CLI。支持认证、项目List、MR、Issue、Pipeline、Release 等常用入口。)",
+    "default": "GitLab 建议使用 glab CLI。支持认证、项目列表、MR、Issue、Pipeline、Release 等常用入口。",
+    "en": "GitLab 建议使用 glab CLI。支持认证、项目List、MR、Issue、Pipeline、Release 等常用入口。",
+    "zh": "GitLab 建议使用 glab CLI。支持认证、项目列表、MR、Issue、Pipeline、Release 等常用入口。"
+  },
+  "ui.head_head_tree_path_hash.cc2e7625": {
+    "all": "HEAD / HEAD^{tree} / path / hash",
+    "default": "HEAD / HEAD^{tree} / path / hash",
+    "en": "HEAD / HEAD^{tree} / path / hash",
+    "zh": "HEAD / HEAD^{tree} / path / hash"
+  },
+  "ui.hide_side_bar.88c80996": {
+    "all": "Hide Side Bar",
+    "default": "Hide Side Bar",
+    "en": "Hide Side Bar",
+    "zh": "Hide Side Bar"
+  },
+  "ui.lfs_track.792604a1": {
+    "all": "LFS Track...",
+    "default": "LFS Track...",
+    "en": "LFS Track...",
+    "zh": "LFS Track..."
+  },
+  "ui.manage_theme.1f5007ac": {
+    "all": "Manage / 主题 (Manage / Theme)",
+    "default": "Manage / Theme",
+    "en": "Manage / Theme",
+    "zh": "Manage / 主题"
+  },
+  "ui.merge.c3f6650d": {
+    "all": "Merge...",
+    "default": "Merge...",
+    "en": "Merge...",
+    "zh": "Merge..."
+  },
+  "ui.merge_into_current_branch.0f593e57": {
+    "all": "Merge into current branch",
+    "default": "Merge into current branch",
+    "en": "Merge into current branch",
+    "zh": "Merge into current branch"
+  },
+  "ui.object_inspector.046bbc13": {
+    "all": "Object Inspector",
+    "default": "Object Inspector",
+    "en": "Object Inspector",
+    "zh": "Object Inspector"
+  },
+  "ui.personal_access_token.46e0a20e": {
+    "all": "Personal Access Token",
+    "default": "Personal Access Token",
+    "en": "Personal Access Token",
+    "zh": "Personal Access Token"
+  },
+  "ui.pull.5219eb9a": {
+    "all": "拉取 (Pull)",
+    "default": "Pull",
+    "en": "Pull",
+    "zh": "拉取"
+  },
+  "ui.pull_ff_only.9ad826c6": {
+    "all": "拉取 --ff-only (Pull --ff-only)",
+    "default": "Pull --ff-only",
+    "en": "Pull --ff-only",
+    "zh": "拉取 --ff-only"
+  },
+  "ui.pull_rebase.b9d5531d": {
+    "all": "拉取 --rebase (Pull --rebase)",
+    "default": "Pull --rebase",
+    "en": "Pull --rebase",
+    "zh": "拉取 --rebase"
+  },
+  "ui.push.8f7f57b5": {
+    "all": "推送 (Push)",
+    "default": "Push",
+    "en": "Push",
+    "zh": "推送"
+  },
+  "ui.push_branch.d1d1260f": {
+    "all": "推送 branch (Push branch)",
+    "default": "Push branch",
+    "en": "Push branch",
+    "zh": "推送 branch"
+  },
+  "ui.push_tags.1448226a": {
+    "all": "推送 --tags (Push --tags)",
+    "default": "Push --tags",
+    "en": "Push --tags",
+    "zh": "推送 --tags"
+  },
+  "ui.push_u.a542570b": {
+    "all": "推送 -u... (Push -u...)",
+    "default": "Push -u...",
+    "en": "Push -u...",
+    "zh": "推送 -u..."
+  },
+  "ui.push_url_local.3fd112cf": {
+    "all": "提交目标: - | 推送 URL: - | Local: - (Commit Target: - | Push URL: - | Local: -)",
+    "default": "提交目标: - | Push URL: - | Local: -",
+    "en": "Commit Target: - | Push URL: - | Local: -",
+    "zh": "提交目标: - | 推送 URL: - | Local: -"
+  },
+  "ui.raw_git.d6cf2f21": {
+    "all": "打开 Raw Git 终端 (Open Raw Git Terminal)",
+    "default": "打开 Raw Git 终端",
+    "en": "Open Raw Git Terminal",
+    "zh": "打开 Raw Git 终端"
+  },
+  "ui.ready.fc554d02": {
+    "all": "READY",
+    "default": "READY",
+    "en": "READY",
+    "zh": "READY"
+  },
+  "ui.rebase.2e0a6cde": {
+    "all": "Rebase...",
+    "default": "Rebase...",
+    "en": "Rebase...",
+    "zh": "Rebase..."
+  },
+  "ui.rebase_current_branch_onto_this_branch.4377f36b": {
+    "all": "Rebase current branch onto this branch",
+    "default": "Rebase current branch onto this branch",
+    "en": "Rebase current branch onto this branch",
+    "zh": "Rebase current branch onto this branch"
+  },
+  "ui.reflog.f4296646": {
+    "all": "Reflog",
+    "default": "Reflog",
+    "en": "Reflog",
+    "zh": "Reflog"
+  },
+  "ui.remote.13d3ee26": {
+    "all": "添加 远程... (Add Remote...)",
+    "default": "添加 Remote...",
+    "en": "Add Remote...",
+    "zh": "添加 远程..."
+  },
+  "ui.remote_url.f8f27c51": {
+    "all": "设置 远程 URL... (Set Remote URL...)",
+    "default": "设置 Remote URL...",
+    "en": "Set Remote URL...",
+    "zh": "设置 远程 URL..."
+  },
+  "ui.remote_v.529090c6": {
+    "all": "远程 -v (Remote -v)",
+    "default": "Remote -v",
+    "en": "Remote -v",
+    "zh": "远程 -v"
+  },
+  "ui.repo_branch_head_remote_ahead_0_behind_0_d.5162a8ff": {
+    "all": "Repo: - | 分支: - | HEAD: - | 远程: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: - (Repo: - | Branch: - | HEAD: - | Remote: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: -)",
+    "default": "Repo: - | Branch: - | HEAD: - | Remote: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: -",
+    "en": "Repo: - | Branch: - | HEAD: - | Remote: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: -",
+    "zh": "Repo: - | 分支: - | HEAD: - | 远程: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: -"
+  },
+  "ui.repository_maintenance.2ed1406d": {
+    "all": "仓库 Maintenance (Repository Maintenance)",
+    "default": "Repository Maintenance",
+    "en": "Repository Maintenance",
+    "zh": "仓库 Maintenance"
+  },
+  "ui.reset_current_branch_hard_here.35e48f5d": {
+    "all": "Reset current branch --hard here",
+    "default": "Reset current branch --hard here",
+    "en": "Reset current branch --hard here",
+    "zh": "Reset current branch --hard here"
+  },
+  "ui.revert_this_commit.c5f542f3": {
+    "all": "回滚 this commit (Revert this commit)",
+    "default": "Revert this commit",
+    "en": "Revert this commit",
+    "zh": "回滚 this commit"
+  },
+  "ui.run.b1b39260": {
+    "all": "运行 (Run)",
+    "default": "Run",
+    "en": "Run",
+    "zh": "运行"
+  },
+  "ui.run_object_command.4e35bdf3": {
+    "all": "运行 Object Command (Run Object Command)",
+    "default": "Run Object Command",
+    "en": "Run Object Command",
+    "zh": "运行 Object Command"
+  },
+  "ui.search_commands_branches_commits_remotes.d23a1525": {
+    "all": "Search commands, branches, commits, remotes…",
+    "default": "Search commands, branches, commits, remotes…",
+    "en": "Search commands, branches, commits, remotes…",
+    "zh": "Search commands, branches, commits, remotes…"
+  },
+  "ui.show_raw_object.6abaf99d": {
+    "all": "显示 raw object (Show raw object)",
+    "default": "Show raw object",
+    "en": "Show raw object",
+    "zh": "显示 raw object"
+  },
+  "ui.ssh_credential_helper_remote_ci_api_cli.5ba68138": {
+    "all": "高级平台配置：SSH、credential helper、remote 权限、保护分支和 CI 状态通常由平台 API 或 CLI 执行。 (AdvancedPlatform配置：SSH、credential helper、remote 权限、保护Branch和 CI 状态通常由Platform API 或 CLI 执行。)",
+    "default": "高级平台配置：SSH、credential helper、remote 权限、保护分支和 CI 状态通常由平台 API 或 CLI 执行。",
+    "en": "AdvancedPlatform配置：SSH、credential helper、remote 权限、保护Branch和 CI 状态通常由Platform API 或 CLI 执行。",
+    "zh": "高级平台配置：SSH、credential helper、remote 权限、保护分支和 CI 状态通常由平台 API 或 CLI 执行。"
+  },
+  "ui.stage_all.566bbba6": {
+    "all": "Stage All",
+    "default": "Stage All",
+    "en": "Stage All",
+    "zh": "Stage All"
+  },
+  "ui.stash.82f2f517": {
+    "all": "贮藏 (Stash)",
+    "default": "Stash",
+    "en": "Stash",
+    "zh": "贮藏"
+  },
+  "ui.stash.f8bfe8a7": {
+    "all": "标签/贮藏 (Tags/Stash)",
+    "default": "标签/Stash",
+    "en": "Tags/Stash",
+    "zh": "标签/贮藏"
+  },
+  "ui.stash_actions_tags_stash.b390ff22": {
+    "all": "贮藏：临时保存工作区改动。操作按钮已移动到右侧 ACTIONS > 标签 / 贮藏。 (Stash：临时保存Workspace改动。操作按钮已移动到右侧 ACTIONS > Tags / Stash。)",
+    "default": "Stash：临时保存工作区改动。操作按钮已移动到右侧 ACTIONS > Tags / Stash。",
+    "en": "Stash：临时保存Workspace改动。操作按钮已移动到右侧 ACTIONS > Tags / Stash。",
+    "zh": "贮藏：临时保存工作区改动。操作按钮已移动到右侧 ACTIONS > 标签 / 贮藏。"
+  },
+  "ui.stash_list.01a49f82": {
+    "all": "贮藏 List (Stash List)",
+    "default": "Stash List",
+    "en": "Stash List",
+    "zh": "贮藏 List"
+  },
+  "ui.stash_message.2b465ff9": {
+    "all": "stash message",
+    "default": "stash message",
+    "en": "stash message",
+    "zh": "stash message"
+  },
+  "ui.stash_pop_selected.91bd8cac": {
+    "all": "贮藏 Pop Selected (Stash Pop Selected)",
+    "default": "Stash Pop Selected",
+    "en": "Stash Pop Selected",
+    "zh": "贮藏 Pop Selected"
+  },
+  "ui.stash_push_u.c2827d2e": {
+    "all": "贮藏 推送 -u (Stash Push -u)",
+    "default": "Stash Push -u",
+    "en": "Stash Push -u",
+    "zh": "贮藏 推送 -u"
+  },
+  "ui.status.bae7d5be": {
+    "all": "状态 (Status)",
+    "default": "Status",
+    "en": "Status",
+    "zh": "状态"
+  },
+  "ui.status_sb.c94a1e51": {
+    "all": "状态 -sb (Status -sb)",
+    "default": "Status -sb",
+    "en": "Status -sb",
+    "zh": "状态 -sb"
+  },
+  "ui.submodule_add.8054baf6": {
+    "all": "Submodule Add...",
+    "default": "Submodule Add...",
+    "en": "Submodule Add...",
+    "zh": "Submodule Add..."
+  },
+  "ui.submodule_update_init_recursive.6abbfbad": {
+    "all": "Submodule Update --init --recursive",
+    "default": "Submodule Update --init --recursive",
+    "en": "Submodule Update --init --recursive",
+    "zh": "Submodule Update --init --recursive"
+  },
+  "ui.switch_to_branch.220749ad": {
+    "all": "切换 to branch (Switch to branch)",
+    "default": "Switch to branch",
+    "en": "Switch to branch",
+    "zh": "切换 to branch"
+  },
+  "ui.tags.848eed0f": {
+    "all": "标签 (Tags)",
+    "default": "Tags",
+    "en": "Tags",
+    "zh": "标签"
+  },
+  "ui.tags_actions_tags_stash.c33f3c0c": {
+    "all": "标签：用于版本发布或重要节点标记。操作按钮已移动到右侧 ACTIONS > 标签 / 贮藏。 (Tags：用于版本发布或重要节点标记。操作按钮已移动到右侧 ACTIONS > Tags / Stash。)",
+    "default": "Tags：用于版本发布或重要节点标记。操作按钮已移动到右侧 ACTIONS > Tags / Stash。",
+    "en": "Tags：用于版本发布或重要节点标记。操作按钮已移动到右侧 ACTIONS > Tags / Stash。",
+    "zh": "标签：用于版本发布或重要节点标记。操作按钮已移动到右侧 ACTIONS > 标签 / 贮藏。"
+  },
+  "ui.text.00d74e13": {
+    "all": "⌄",
+    "default": "⌄",
+    "en": "⌄",
+    "zh": "⌄"
+  },
+  "ui.text.012aeccc": {
+    "all": "高级参数面板 (AdvancedArguments面板)",
+    "default": "高级参数面板",
+    "en": "AdvancedArguments面板",
+    "zh": "高级参数面板"
+  },
+  "ui.text.0157cb3d": {
+    "all": "刷新图 (Refresh Graph)",
+    "default": "刷新图",
+    "en": "Refresh Graph",
+    "zh": "刷新图"
+  },
+  "ui.text.04c7d1b1": {
+    "all": "▔",
+    "default": "▔",
+    "en": "▔",
+    "zh": "▔"
+  },
+  "ui.text.0860ad11": {
+    "all": "显示右侧栏 (Show Right Sidebar)",
+    "default": "显示右侧栏",
+    "en": "Show Right Sidebar",
+    "zh": "显示右侧栏"
+  },
+  "ui.text.08709409": {
+    "all": "关闭输入提示并恢复终端",
+    "default": "关闭输入提示并恢复终端",
+    "en": "关闭输入提示并恢复终端",
+    "zh": "关闭输入提示并恢复终端"
+  },
+  "ui.text.09b58aa3": {
+    "all": "外观 (Appearance)",
+    "default": "外观",
+    "en": "Appearance",
+    "zh": "外观"
+  },
+  "ui.text.0aba8c85": {
+    "all": "分支列表 (Branch List)",
+    "default": "分支列表",
+    "en": "Branch List",
+    "zh": "分支列表"
+  },
+  "ui.text.0cd74a65": {
+    "all": "有向图 (Directed Graph)",
+    "default": "有向图",
+    "en": "Directed Graph",
+    "zh": "有向图"
+  },
+  "ui.text.0d1c0da5": {
+    "all": "已切换语言 (已切换Language)",
+    "default": "已切换语言",
+    "en": "已切换Language",
+    "zh": "已切换语言"
+  },
+  "ui.text.1034987a": {
+    "all": "$ >",
+    "default": "$ >",
+    "en": "$ >",
+    "zh": "$ >"
+  },
+  "ui.text.109d38b4": {
+    "all": "常用选项",
+    "default": "常用选项",
+    "en": "常用选项",
+    "zh": "常用选项"
+  },
+  "ui.text.11714b84": {
+    "all": "▣",
+    "default": "▣",
+    "en": "▣",
+    "zh": "▣"
+  },
+  "ui.text.13d0278b": {
+    "all": "创建/初始化本地仓库... (Create / Initialize Local Repository...)",
+    "default": "创建/初始化本地仓库...",
+    "en": "Create / Initialize Local Repository...",
+    "zh": "创建/初始化本地仓库..."
+  },
+  "ui.text.14fa6a5e": {
+    "all": "用户名 / 组织名 (Username / Organization)",
+    "default": "用户名 / 组织名",
+    "en": "Username / Organization",
+    "zh": "用户名 / 组织名"
+  },
+  "ui.text.1730b75d": {
+    "all": "切换分支... (Switch Branch...)",
+    "default": "切换分支...",
+    "en": "Switch Branch...",
+    "zh": "切换分支..."
+  },
+  "ui.text.21b1de2f": {
+    "all": "高级配置 (Advanced Configuration)",
+    "default": "高级配置",
+    "en": "Advanced Configuration",
+    "zh": "高级配置"
+  },
+  "ui.text.2baf302d": {
+    "all": "适应视图 (Fit View)",
+    "default": "适应视图",
+    "en": "Fit View",
+    "zh": "适应视图"
+  },
+  "ui.text.2ebc8f32": {
+    "all": "语言设置 (Language设置)",
+    "default": "语言设置",
+    "en": "Language设置",
+    "zh": "语言设置"
+  },
+  "ui.text.2f6f9d51": {
+    "all": "分支 (Branch)",
+    "default": "分支",
+    "en": "Branch",
+    "zh": "分支"
+  },
+  "ui.text.30fd4ed5": {
+    "all": "示例 (Examples)",
+    "default": "示例",
+    "en": "Examples",
+    "zh": "示例"
+  },
+  "ui.text.31e33107": {
+    "all": "快捷键 (Shortcuts)",
+    "default": "快捷键",
+    "en": "Shortcuts",
+    "zh": "快捷键"
+  },
+  "ui.text.39af02b9": {
+    "all": "打开仓库文件夹 (Open Repository Folder)",
+    "default": "打开仓库文件夹",
+    "en": "Open Repository Folder",
+    "zh": "打开仓库文件夹"
+  },
+  "ui.text.3a29cc72": {
+    "all": "显示底部栏 (Show Bottom Panel)",
+    "default": "显示底部栏",
+    "en": "Show Bottom Panel",
+    "zh": "显示底部栏"
+  },
+  "ui.text.4968e7f6": {
+    "all": "← 返回 (← Back)",
+    "default": "← 返回",
+    "en": "← Back",
+    "zh": "← 返回"
+  },
+  "ui.text.49deaf7d": {
+    "all": "文件 (File)",
+    "default": "文件",
+    "en": "File",
+    "zh": "文件"
+  },
+  "ui.text.4b510086": {
+    "all": "创建分支... (Create Branch...)",
+    "default": "创建分支...",
+    "en": "Create Branch...",
+    "zh": "创建分支..."
+  },
+  "ui.text.4d0b4688": {
+    "all": "取消 (Cancel)",
+    "default": "取消",
+    "en": "Cancel",
+    "zh": "取消"
+  },
+  "ui.text.55914e1c": {
+    "all": "仓库 (Repository)",
+    "default": "仓库",
+    "en": "Repository",
+    "zh": "仓库"
+  },
+  "ui.text.571973ed": {
+    "all": "打开本地仓库... (Open Local Repository...)",
+    "default": "打开本地仓库...",
+    "en": "Open Local Repository...",
+    "zh": "打开本地仓库..."
+  },
+  "ui.text.5760b06a": {
+    "all": "◨",
+    "default": "◨",
+    "en": "◨",
+    "zh": "◨"
+  },
+  "ui.text.5ef29a57": {
+    "all": "配色 (Accent Color)",
+    "default": "配色",
+    "en": "Accent Color",
+    "zh": "配色"
+  },
+  "ui.text.628b81d2": {
+    "all": "恢复工作区 + 底部终端布局 (恢复Workspace + 底部终端布局)",
+    "default": "恢复工作区 + 底部终端布局",
+    "en": "恢复Workspace + 底部终端布局",
+    "zh": "恢复工作区 + 底部终端布局"
+  },
+  "ui.text.62b0d467": {
+    "all": "创建标签... (Create Tag...)",
+    "default": "创建标签...",
+    "en": "Create Tag...",
+    "zh": "创建标签..."
+  },
+  "ui.text.6d977aec": {
+    "all": "⋯",
+    "default": "⋯",
+    "en": "⋯",
+    "zh": "⋯"
+  },
+  "ui.text.6dee5b70": {
+    "all": "选择目录 (Choose Directory)",
+    "default": "选择目录",
+    "en": "Choose Directory",
+    "zh": "选择目录"
+  },
+  "ui.text.6e4ddf76": {
+    "all": "◧",
+    "default": "◧",
+    "en": "◧",
+    "zh": "◧"
+  },
+  "ui.text.750642cc": {
+    "all": "深色模式 (Dark Mode)",
+    "default": "深色模式",
+    "en": "Dark Mode",
+    "zh": "深色模式"
+  },
+  "ui.text.7af2b579": {
+    "all": "▢",
+    "default": "▢",
+    "en": "▢",
+    "zh": "▢"
+  },
+  "ui.text.7be2d2d2": {
+    "all": "中文",
+    "default": "中文",
+    "en": "中文",
+    "zh": "中文"
+  },
+  "ui.text.7eba06cf": {
+    "all": "收起底部终端 (Collapse Bottom Terminal)",
+    "default": "收起底部终端",
+    "en": "Collapse Bottom Terminal",
+    "zh": "收起底部终端"
+  },
+  "ui.text.7f628978": {
+    "all": "复制最后命令 (Copy Last Command)",
+    "default": "复制最后命令",
+    "en": "Copy Last Command",
+    "zh": "复制最后命令"
+  },
+  "ui.text.801947aa": {
+    "all": "远程 (Remote)",
+    "default": "远程",
+    "en": "Remote",
+    "zh": "远程"
+  },
+  "ui.text.87c2be26": {
+    "all": "切换语言 (切换Language)",
+    "default": "切换语言",
+    "en": "切换Language",
+    "zh": "切换语言"
+  },
+  "ui.text.8e732e1f": {
+    "all": "刷新全部 (Refresh All)",
+    "default": "刷新全部",
+    "en": "Refresh All",
+    "zh": "刷新全部"
+  },
+  "ui.text.93c80508": {
+    "all": "删除远程分支... (Delete Remote Branch...)",
+    "default": "删除远程分支...",
+    "en": "Delete Remote Branch...",
+    "zh": "删除远程分支..."
+  },
+  "ui.text.9b1df47a": {
+    "all": "新分支名 (新Branch名)",
+    "default": "新分支名",
+    "en": "新Branch名",
+    "zh": "新分支名"
+  },
+  "ui.text.9d83d547": {
+    "all": "更改 (Changes)",
+    "default": "更改",
+    "en": "Changes",
+    "zh": "更改"
+  },
+  "ui.text.a17555a1": {
+    "all": "浅色模式 (Light Mode)",
+    "default": "浅色模式",
+    "en": "Light Mode",
+    "zh": "浅色模式"
+  },
+  "ui.text.a1ff8da4": {
+    "all": "工作区 (Workspace)",
+    "default": "工作区",
+    "en": "Workspace",
+    "zh": "工作区"
+  },
+  "ui.text.ab7c1f12": {
+    "all": "显示/隐藏底部栏 (Show / Hide Bottom Panel)",
+    "default": "显示/隐藏底部栏",
+    "en": "Show / Hide Bottom Panel",
+    "zh": "显示/隐藏底部栏"
+  },
+  "ui.text.adf465eb": {
+    "all": "帮助 (Help)",
+    "default": "帮助",
+    "en": "Help",
+    "zh": "帮助"
+  },
+  "ui.text.afe97b13": {
+    "all": "原生命令示例 (Native Command Examples)",
+    "default": "原生命令示例",
+    "en": "Native Command Examples",
+    "zh": "原生命令示例"
+  },
+  "ui.text.be78b205": {
+    "all": "历史 (History)",
+    "default": "历史",
+    "en": "History",
+    "zh": "历史"
+  },
+  "ui.text.c009d0ab": {
+    "all": "高级 (Advanced)",
+    "default": "高级",
+    "en": "Advanced",
+    "zh": "高级"
+  },
+  "ui.text.c31613aa": {
+    "all": "查看配置 (Show Config)",
+    "default": "查看配置",
+    "en": "Show Config",
+    "zh": "查看配置"
+  },
+  "ui.text.c8afb163": {
+    "all": "⟳",
+    "default": "⟳",
+    "en": "⟳",
+    "zh": "⟳"
+  },
+  "ui.text.cd99b225": {
+    "all": "语言 (Language)",
+    "default": "语言",
+    "en": "Language",
+    "zh": "语言"
+  },
+  "ui.text.cebbb470": {
+    "all": "视图 (View)",
+    "default": "视图",
+    "en": "View",
+    "zh": "视图"
+  },
+  "ui.text.d425a89b": {
+    "all": "放大/缩小终端 (Maximize / Restore Terminal)",
+    "default": "放大/缩小终端",
+    "en": "Maximize / Restore Terminal",
+    "zh": "放大/缩小终端"
+  },
+  "ui.text.d46f82fd": {
+    "all": "列表 (List)",
+    "default": "列表",
+    "en": "List",
+    "zh": "列表"
+  },
+  "ui.text.e4b9d694": {
+    "all": "平台 (Platform)",
+    "default": "平台",
+    "en": "Platform",
+    "zh": "平台"
+  },
+  "ui.text.e848ddd4": {
+    "all": "主题 (Theme)",
+    "default": "主题",
+    "en": "Theme",
+    "zh": "主题"
+  },
+  "ui.text.ea91ac2c": {
+    "all": "显示左侧栏 (Show Left Sidebar)",
+    "default": "显示左侧栏",
+    "en": "Show Left Sidebar",
+    "zh": "显示左侧栏"
+  },
+  "ui.text.ef76f758": {
+    "all": "放大终端；再次点击恢复初始底部高度",
+    "default": "放大终端；再次点击恢复初始底部高度",
+    "en": "放大终端；再次点击恢复初始底部高度",
+    "zh": "放大终端；再次点击恢复初始底部高度"
+  },
+  "ui.text.f12abbdc": {
+    "all": "显示/隐藏左侧栏 (Show / Hide Left Sidebar)",
+    "default": "显示/隐藏左侧栏",
+    "en": "Show / Hide Left Sidebar",
+    "zh": "显示/隐藏左侧栏"
+  },
+  "ui.text.f526c899": {
+    "all": "确定 (OK)",
+    "default": "确定",
+    "en": "OK",
+    "zh": "确定"
+  },
+  "ui.text.f7a6b2c9": {
+    "all": "显示/隐藏右侧栏 (Show / Hide Right Sidebar)",
+    "default": "显示/隐藏右侧栏",
+    "en": "Show / Hide Right Sidebar",
+    "zh": "显示/隐藏右侧栏"
+  },
+  "ui.text.f94afcf2": {
+    "all": "刷新仓库状态 (Refresh Repository Status)",
+    "default": "刷新仓库状态",
+    "en": "Refresh Repository Status",
+    "zh": "刷新仓库状态"
+  },
+  "ui.text.feecb1e6": {
+    "all": "退出 (Exit)",
+    "default": "退出",
+    "en": "Exit",
+    "zh": "退出"
+  },
+  "ui.toggle_panel.a33b23df": {
+    "all": "Toggle Panel",
+    "default": "Toggle Panel",
+    "en": "Toggle Panel",
+    "zh": "Toggle Panel"
+  },
+  "ui.toggle_primary_side_bar.34481614": {
+    "all": "Toggle Primary Side Bar",
+    "default": "Toggle Primary Side Bar",
+    "en": "Toggle Primary Side Bar",
+    "zh": "Toggle Primary Side Bar"
+  },
+  "ui.toggle_secondary_side_bar.0cc8fe7c": {
+    "all": "Toggle Secondary Side Bar",
+    "default": "Toggle Secondary Side Bar",
+    "en": "Toggle Secondary Side Bar",
+    "zh": "Toggle Secondary Side Bar"
+  },
+  "ui.unstage_all.0c090064": {
+    "all": "全部取消暂存 (Unstage All)",
+    "default": "Unstage All",
+    "en": "Unstage All",
+    "zh": "全部取消暂存"
+  },
+  "ui.user.9f8a2389": {
+    "all": "用户 (User)",
+    "default": "User",
+    "en": "User",
+    "zh": "用户"
+  },
+  "ui.user_email.cd2bc04e": {
+    "all": "设置 user.email... (Set user.email...)",
+    "default": "设置 user.email...",
+    "en": "Set user.email...",
+    "zh": "设置 user.email..."
+  },
+  "ui.user_name.0f12d844": {
+    "all": "设置 user.name... (Set user.name...)",
+    "default": "设置 user.name...",
+    "en": "Set user.name...",
+    "zh": "设置 user.name..."
+  },
+  "ui.v1_0_0.7ac19ee1": {
+    "all": "v1.0.0",
+    "default": "v1.0.0",
+    "en": "v1.0.0",
+    "zh": "v1.0.0"
+  },
+  "ui.worktree_add.708a4ba9": {
+    "all": "Worktree Add...",
+    "default": "Worktree Add...",
+    "en": "Worktree Add...",
+    "zh": "Worktree Add..."
+  },
+  "ui.worktree_remove.66be2352": {
+    "all": "Worktree Remove...",
+    "default": "Worktree Remove...",
+    "en": "Worktree Remove...",
+    "zh": "Worktree Remove..."
+  }
+}
