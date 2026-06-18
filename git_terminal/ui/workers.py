@@ -48,6 +48,7 @@ class ShellCommandWorker(QObject):
             env["LC_ALL"] = env.get("LC_ALL", "C.UTF-8")
             env["LANG"] = env.get("LANG", "C.UTF-8")
             env["LESSCHARSET"] = "utf-8"
+            env.setdefault("GIT_TERMINAL_PROMPT", "0")
             if sys.platform.startswith("win"):
                 cmd = ["cmd.exe", "/d", "/s", "/c", f"chcp 65001>nul & {self.command}"]
             else:

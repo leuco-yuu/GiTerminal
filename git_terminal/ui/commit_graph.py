@@ -196,7 +196,9 @@ class CommitGraphView(QGraphicsView):
             self.scale(factor, factor)
             event.accept()
         else:
-            super().wheelEvent(event)
+            # The directed graph canvas stays visually fixed on normal wheel events.
+            # Only Ctrl+wheel zooms; the detail list owns its own small scrollbars.
+            event.accept()
 
     def select_commit(self, commit_hash: str) -> None:
         self.selected_hash = commit_hash

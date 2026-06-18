@@ -119,11 +119,29 @@
     "en": "配置按钮位于右侧 ACTIONS：设置 user.name / user.email、Refresh Status、Credential Helper、各Platform登录检查。",
     "zh": "配置按钮位于右侧 ACTIONS：设置 user.name / user.email、刷新 状态、Credential Helper、各平台登录检查。"
   },
+  "ui.add_all.39c7244c": {
+    "all": "添加全部 (Add All)",
+    "default": "Add All",
+    "en": "Add All",
+    "zh": "添加全部"
+  },
   "ui.add_all_commit.df3d41ef": {
     "all": "添加全部并提交... (Add All + Commit...)",
     "default": "Add All + Commit...",
     "en": "Add All + Commit...",
     "zh": "添加全部并提交..."
+  },
+  "ui.add_commit.27dce96d": {
+    "all": "添加并提交 (Add + Commit)",
+    "default": "Add+Commit",
+    "en": "Add + Commit",
+    "zh": "添加并提交"
+  },
+  "ui.all_commands.8cbe3ec9": {
+    "all": "全部命令 (All Commands)",
+    "default": "All Commands",
+    "en": "All Commands",
+    "zh": "全部命令"
   },
   "ui.all_prune_origin_main.e50f4419": {
     "all": "参数，例如 --all --prune 或 origin main (Arguments，例如 --all --prune 或 origin main)",
@@ -485,6 +503,12 @@
     "en": "GitLab 建议使用 glab CLI。支持认证、项目List、MR、Issue、Pipeline、Release 等常用入口。",
     "zh": "GitLab 建议使用 glab CLI。支持认证、项目列表、MR、Issue、Pipeline、Release 等常用入口。"
   },
+  "ui.graph.9a7405eb": {
+    "all": "图 (Graph)",
+    "default": "Graph",
+    "en": "Graph",
+    "zh": "图"
+  },
   "ui.head_head_tree_path_hash.cc2e7625": {
     "all": "HEAD / HEAD^{tree} / path / hash",
     "default": "HEAD / HEAD^{tree} / path / hash",
@@ -502,6 +526,12 @@
     "default": "LFS Track...",
     "en": "LFS Track...",
     "zh": "LFS Track..."
+  },
+  "ui.maintenance.94de303b": {
+    "all": "维护 (Maintenance)",
+    "default": "Maintenance",
+    "en": "Maintenance",
+    "zh": "维护"
   },
   "ui.manage_theme.1f5007ac": {
     "all": "Manage / 主题 (Manage / Theme)",
@@ -521,6 +551,12 @@
     "en": "Merge into current branch",
     "zh": "Merge into current branch"
   },
+  "ui.merge_to.d5d631e7": {
+    "all": "合并到 (Merge To)",
+    "default": "Merge To",
+    "en": "Merge To",
+    "zh": "合并到"
+  },
   "ui.object_inspector.046bbc13": {
     "all": "Object Inspector",
     "default": "Object Inspector",
@@ -532,6 +568,12 @@
     "default": "Personal Access Token",
     "en": "Personal Access Token",
     "zh": "Personal Access Token"
+  },
+  "ui.providers.87b7c08b": {
+    "all": "平台配置 (Providers)",
+    "default": "Providers",
+    "en": "Providers",
+    "zh": "平台配置"
   },
   "ui.pull.5219eb9a": {
     "all": "拉取 (Pull)",
@@ -605,6 +647,12 @@
     "en": "Rebase current branch onto this branch",
     "zh": "Rebase current branch onto this branch"
   },
+  "ui.rebase_to.dd313d9d": {
+    "all": "变基到 (Rebase To)",
+    "default": "Rebase To",
+    "en": "Rebase To",
+    "zh": "变基到"
+  },
   "ui.reflog.f4296646": {
     "all": "Reflog",
     "default": "Reflog",
@@ -676,6 +724,12 @@
     "default": "Show raw object",
     "en": "Show raw object",
     "zh": "显示 raw object"
+  },
+  "ui.ssh_credential.6649ae94": {
+    "all": "SSH / 凭据 (SSH / Credential)",
+    "default": "SSH / Credential",
+    "en": "SSH / Credential",
+    "zh": "SSH / 凭据"
   },
   "ui.ssh_credential_helper_remote_ci_api_cli.5ba68138": {
     "all": "高级平台配置：SSH、credential helper、remote 权限、保护分支和 CI 状态通常由平台 API 或 CLI 执行。 (AdvancedPlatform配置：SSH、credential helper、remote 权限、保护Branch和 CI 状态通常由Platform API 或 CLI 执行。)",
@@ -869,6 +923,12 @@
     "en": "Switch Branch...",
     "zh": "切换分支..."
   },
+  "ui.text.1b7e9646": {
+    "all": "分支图 (Branch Graph)",
+    "default": "分支图",
+    "en": "Branch Graph",
+    "zh": "分支图"
+  },
   "ui.text.21b1de2f": {
     "all": "高级配置 (Advanced Configuration)",
     "default": "高级配置",
@@ -977,6 +1037,12 @@
     "en": "Create Tag...",
     "zh": "创建标签..."
   },
+  "ui.text.6c820452": {
+    "all": "平台账户 (Platform Accounts)",
+    "default": "平台账户",
+    "en": "Platform Accounts",
+    "zh": "平台账户"
+  },
   "ui.text.6d977aec": {
     "all": "⋯",
     "default": "⋯",
@@ -1073,6 +1139,12 @@
     "en": "Workspace",
     "zh": "工作区"
   },
+  "ui.text.a72ef18d": {
+    "all": "工具 (Tools)",
+    "default": "工具",
+    "en": "Tools",
+    "zh": "工具"
+  },
   "ui.text.ab7c1f12": {
     "all": "显示/隐藏底部栏 (Show / Hide Bottom Panel)",
     "default": "显示/隐藏底部栏",
@@ -1085,11 +1157,23 @@
     "en": "Help",
     "zh": "帮助"
   },
+  "ui.text.aed869d9": {
+    "all": "远程配置 (Remote Config)",
+    "default": "远程配置",
+    "en": "Remote Config",
+    "zh": "远程配置"
+  },
   "ui.text.afe97b13": {
     "all": "原生命令示例 (Native Command Examples)",
     "default": "原生命令示例",
     "en": "Native Command Examples",
     "zh": "原生命令示例"
+  },
+  "ui.text.b6667731": {
+    "all": "打开仓库... (Open Repository...)",
+    "default": "打开仓库...",
+    "en": "Open Repository...",
+    "zh": "打开仓库..."
   },
   "ui.text.be78b205": {
     "all": "历史 (History)",
@@ -1163,6 +1247,12 @@
     "en": "放大终端；再次点击恢复初始底部高度",
     "zh": "放大终端；再次点击恢复初始底部高度"
   },
+  "ui.text.f0438465": {
+    "all": "初始化... (Initialize...)",
+    "default": "初始化...",
+    "en": "Initialize...",
+    "zh": "初始化..."
+  },
   "ui.text.f12abbdc": {
     "all": "显示/隐藏左侧栏 (Show / Hide Left Sidebar)",
     "default": "显示/隐藏左侧栏",
@@ -1210,6 +1300,12 @@
     "default": "Toggle Secondary Side Bar",
     "en": "Toggle Secondary Side Bar",
     "zh": "Toggle Secondary Side Bar"
+  },
+  "ui.unstage.7298d7ed": {
+    "all": "取消暂存 (Unstage)",
+    "default": "Unstage",
+    "en": "Unstage",
+    "zh": "取消暂存"
   },
   "ui.unstage_all.0c090064": {
     "all": "全部取消暂存 (Unstage All)",

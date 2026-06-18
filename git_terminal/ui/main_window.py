@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, QThread, QPoint
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QKeySequence, QTextCursor
+from PyQt6.QtGui import QAction, QActionGroup, QBrush, QColor, QIcon, QKeySequence, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -68,7 +68,7 @@ class CloneDialog(QDialog):
         self.url = QLineEdit()
         self.url.setPlaceholderText("git@github.com:org/repo.git 或 https://...")
         self.dest = QLineEdit()
-        browse = QPushButton("选择目录")
+        browse = QPushButton("📁")
         browse.clicked.connect(self._browse)
         row = QHBoxLayout()
         row.addWidget(self.dest)
@@ -118,6 +118,7 @@ class MainWindow(QMainWindow):
         self.language_mode = str(base_config.get("language_mode", "default"))
         self.language = LanguageService(self.language_mode)
         self.recent_repositories = self._load_recent_repositories()
+        self.custom_buttons = self._load_custom_buttons()
         self.command_catalog = build_command_catalog()
         self._threads: List[Tuple[QThread, GitCommandWorker]] = []
         self._option_checks: List[QCheckBox] = []
@@ -183,6 +184,45 @@ class MainWindow(QMainWindow):
         config = self._load_config()
         config["recent_repositories"] = self.recent_repositories[:20]
         self._save_config(config)
+
+    def _load_custom_buttons(self) -> list[dict[str, str]]:
+        config = self._load_config()
+        raw = config.get("custom_buttons", [])
+        if not isinstance(raw, list):
+            return []
+        buttons: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            commands = str(item.get("commands", "")).strip()
+            if name and commands and not any(existing["name"] == name for existing in buttons):
+                buttons.append({"name": name, "commands": commands})
+        return buttons[:40]
+
+    def _save_custom_buttons(self) -> None:
+        config = self._load_config()
+        config["custom_buttons"] = self.custom_buttons[:40]
+        self._save_config(config)
+
+    def register_custom_button(self, name: str, commands: str, persist: bool = True) -> bool:
+        """Public extension hook for user scripts/plugins.
+
+        Example:
+            window.register_custom_button("Sync", "git fetch --all --prune\ngit status -sb")
+        """
+        name = str(name).strip()
+        commands = str(commands).strip()
+        if not name or not commands:
+            return False
+        if any(item.get("name") == name for item in self.custom_buttons):
+            return False
+        self.custom_buttons.append({"name": name, "commands": commands})
+        if persist:
+            self._save_custom_buttons()
+        if hasattr(self, "context_scroll"):
+            self._rebuild_context_actions()
+        return True
 
     def _remember_repository(self, path: str | Path) -> None:
         repo = str(Path(path).expanduser().resolve())
@@ -564,32 +604,55 @@ class MainWindow(QMainWindow):
         self._compact_ui_controls()
 
     def _build_context_actions(self) -> None:
+        """Build the right ACTIONS sidebar with collapsible groups."""
         self.context_scroll = QScrollArea()
         self.context_scroll.setObjectName("contextScroll")
         self.context_scroll.setWidgetResizable(True)
         self.context_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.context_panel = QWidget()
         self.context_panel.setMinimumWidth(0)
-        layout = QVBoxLayout(self.context_panel)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(8)
+        self.context_panel_layout = QVBoxLayout(self.context_panel)
+        self.context_panel_layout.setContentsMargins(6, 6, 6, 6)
+        self.context_panel_layout.setSpacing(8)
         self.context_buttons = []
+        self._populate_context_action_groups()
+        self.context_scroll.setWidget(self.context_panel)
 
-        def add_group(title: str, entries: list[tuple[str, Callable[[], None], bool]]) -> None:
+    def _rebuild_context_actions(self) -> None:
+        if not hasattr(self, "context_panel_layout"):
+            return
+        layout = self.context_panel_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.context_buttons = []
+        self._populate_context_action_groups()
+        self._compact_ui_controls()
+
+    def _populate_context_action_groups(self) -> None:
+        layout = self.context_panel_layout
+
+        def add_group(title: str, entries: list[tuple[str, Callable[[], None], bool]]) -> QGroupBox:
             box = QGroupBox(title)
             box.setObjectName("contextActionGroup")
+            box.setCheckable(True)
+            box.setChecked(True)
             grid = QGridLayout(box)
             grid.setContentsMargins(6, 8, 6, 6)
             grid.setHorizontalSpacing(6)
             grid.setVerticalSpacing(6)
             row = 0
             col = 0
+            group_widgets: list[QPushButton] = []
             for text, handler, wide in entries:
                 button = QPushButton(text)
                 button.setObjectName("contextActionWideButton" if wide else "contextActionButton")
                 button.setToolTip(text)
                 button.clicked.connect(handler)
                 self.context_buttons.append(button)
+                group_widgets.append(button)
                 if wide:
                     if col:
                         row += 1
@@ -603,104 +666,85 @@ class MainWindow(QMainWindow):
                     if col >= 2:
                         row += 1
                         col = 0
+            box.toggled.connect(lambda checked, widgets=group_widgets: [w.setVisible(checked) for w in widgets])
             layout.addWidget(box)
+            return box
 
         add_group("Repository", [
             ("Open", self.open_repository, False),
+            ("Clone", self.clone_repository, False),
             ("Init", self.init_repository, False),
-            ("Clone...", self.clone_repository, False),
             ("Folder", self.open_repo_folder, False),
             ("Refresh", self.refresh_all, False),
-            ("Status -sb", lambda: self.run_git_command(["status", "-sb"], callback=lambda _: self.refresh_all()), False),
+            ("Status", lambda: self.run_git_command(["status", "-sb"], callback=lambda _: self.refresh_all()), False),
         ])
         add_group("Changes", [
-            ("Add Selected", self.stage_selected, False),
-            ("Unstage Sel", self.unstage_selected, False),
-            ("git add -A", lambda: self.run_git_command(["add", "-A"], callback=lambda _: self.refresh_all()), False),
-            ("Unstage All", lambda: self.run_git_command(["restore", "--staged", "."], callback=lambda _: self.refresh_all()), False),
-            ("Restore Sel", self.restore_selected, False),
-            ("Clean", self.clean_selected_untracked, False),
+            ("Add All", lambda: self.run_git_command(["add", "-A"], callback=lambda _: self.refresh_all()), False),
+            ("Unstage", lambda: self.run_git_command(["restore", "--staged", "."], callback=lambda _: self.refresh_all()), False),
+            ("Commit", self.commit_staged_only, False),
+            ("Add+Commit", self.commit_changes, False),
             ("Diff", self.show_selected_diff, False),
-            ("Add All + Commit...", self.commit_changes, True),
-            ("Commit Only...", self.commit_staged_only, True),
-            ("Amend --no-edit", lambda: self.run_git_command(["commit", "--amend", "--no-edit"], callback=lambda _: self.refresh_all()), True),
+            ("Clean", self.clean_selected_untracked, False),
         ])
-        add_group("History / Graph", [
-            ("Log", lambda: self.refresh_history(all_branches=False), False),
-            ("Log --all", lambda: self.refresh_history(all_branches=True), False),
+        add_group("History", [
+            ("Log", lambda: self.refresh_history(all_branches=True), False),
+            ("Graph", self.refresh_branch_graph, False),
             ("Show", self.show_commit_details, False),
             ("Checkout", self.checkout_selected_commit, False),
-            ("Cherry-pick", self.cherry_pick_selected_commit, False),
-            ("Revert", self.revert_selected_commit, False),
-            ("Refresh Graph", self.refresh_branch_graph, True),
-            ("Fit Graph", lambda: self.branch_graph_view.fit_to_view() if hasattr(self, "branch_graph_view") else None, False),
         ])
         add_group("Branch", [
-            ("Refresh", self.refresh_branches, False),
+            ("New", self.create_branch_from_menu, False),
             ("Switch", self.switch_branch, False),
-            ("New...", self.create_branch_from_menu, False),
-            ("Delete", self.delete_branch, False),
-            ("Merge...", self.merge_branch_from_menu, False),
-            ("Rebase...", self.rebase_branch_from_menu, False),
-            ("Merge To...", self.merge_to_target_from_menu, False),
-            ("Rebase To...", self.rebase_to_target_from_menu, False),
-            ("Push -u...", self.push_current_branch_upstream_from_menu, True),
-            ("Create from Commit...", self.branch_from_selected_commit, True),
+            ("Merge", self.merge_branch_from_menu, False),
+            ("Rebase", self.rebase_branch_from_menu, False),
+            ("Merge To", self.merge_to_target_from_menu, False),
+            ("Rebase To", self.rebase_to_target_from_menu, False),
+            ("Push -u", self.push_current_branch_upstream_from_menu, True),
         ])
         add_group("Remote", [
-            ("remote -v", lambda: self.run_git_command(["remote", "-v"], callback=self.show_result_in_log), False),
-            ("Add...", self.add_remote, False),
-            ("Set URL...", self.set_remote_url, False),
-            ("Fetch", lambda: self.run_git_command(["fetch"], callback=lambda _: self.refresh_all(), timeout=300), False),
-            ("Fetch --all", lambda: self.run_git_command(["fetch", "--all", "--prune"], callback=lambda _: self.refresh_all(), timeout=300), False),
-            ("Pull", lambda: self.run_git_command(["pull"], callback=lambda _: self.refresh_all(), timeout=300), False),
-            ("Pull --rebase", lambda: self.run_git_command(["pull", "--rebase"], callback=lambda _: self.refresh_all(), timeout=300), True),
+            ("Fetch", lambda: self.run_git_command(["fetch", "--all", "--prune"], callback=lambda _: self.refresh_all(), timeout=300), False),
+            ("Pull", lambda: self.run_git_command(["pull", "--ff-only"], callback=lambda _: self.refresh_all(), timeout=300), False),
             ("Push", lambda: self.run_git_command(["push"], callback=lambda _: self.refresh_all(), timeout=300), False),
-            ("Push Tags", lambda: self.run_git_command(["push", "--tags"], callback=lambda _: self.refresh_all(), timeout=300), False),
-            ("Delete Remote Branch...", self.delete_remote_branch, True),
-            ("SSH Info", self.show_ssh_remote_info, False),
-            ("Generate SSH Key...", self.generate_ssh_key_from_menu, True),
-            ("ssh-add Key...", self.ssh_add_key_from_menu, True),
-            ("Test GitHub SSH", lambda: self.run_external_command(["ssh", "-T", "git@github.com"]), True),
-            ("Credential Helper...", self.configure_credential_helper, True),
+            ("Remote -v", lambda: self.run_git_command(["remote", "-v"], callback=self.show_result_in_log), False),
+            ("Add Remote", self.add_remote, True),
+            ("SSH / Credential", self.show_ssh_remote_info, True),
         ])
         add_group("Tags / Stash", [
-            ("Refresh", self.refresh_tags_stash, False),
-            ("New Tag...", self.create_tag_from_menu, False),
-            ("Push Tag...", self.push_tag, False),
-            ("Delete Tag", self.delete_tag, False),
-            ("Stash -u", self.stash_push, False),
+            ("New Tag", self.create_tag_from_menu, False),
+            ("Push Tags", lambda: self.run_git_command(["push", "--tags"], callback=lambda _: self.refresh_all(), timeout=300), False),
+            ("Stash", self.stash_push, False),
             ("Stash Pop", self.stash_pop, False),
-            ("Stash Apply", self.stash_apply, False),
-            ("Stash Drop", self.stash_drop, False),
         ])
         add_group("Advanced", [
-            ("Run Object", self.run_object_command, True),
-            ("Run Git Command", self.run_advanced_command, True),
-            ("Open Help", self.open_selected_command_help, False),
-            ("Reload Help", self.reload_command_catalog, False),
-            ("fsck --full", lambda: self.run_git_command(["fsck", "--full"], callback=self.show_result_in_log, timeout=300), False),
-            ("gc", lambda: self.run_git_command(["gc"], callback=self.show_result_in_log, timeout=300), False),
-            ("count objects", lambda: self.run_git_command(["count-objects", "-vH"], callback=self.show_result_in_log), True),
-            ("Worktree Add...", self.worktree_add_from_menu, True),
-            ("Submodule Add...", self.submodule_add_from_menu, True),
-            ("LFS Track...", self.lfs_track_from_menu, True),
+            ("All Commands", lambda: self.tabs.setCurrentIndex(7) if hasattr(self, "tabs") else None, True),
+            ("Object Inspector", lambda: self.tabs.setCurrentIndex(6) if hasattr(self, "tabs") else None, True),
+            ("Maintenance", lambda: self.run_git_command(["count-objects", "-vH"], callback=self.show_result_in_log), True),
         ])
         add_group("Platform", [
-            ("User Page", self.show_user_accounts, False),
-            ("Set Name", self.set_git_user_name, False),
-            ("Set Email", self.set_git_user_email, False),
-            ("Refresh Status", self.refresh_platform_statuses, True),
-            ("gh auth", lambda: self.run_external_command(["gh", "auth", "status"]), False),
-            ("gh repos", lambda: self.run_external_command(["gh", "repo", "list", "--limit", "50"]), False),
-            ("gh PRs", lambda: self.run_external_command(["gh", "pr", "list"]), False),
-            ("glab auth", lambda: self.run_external_command(["glab", "auth", "status"]), False),
-            ("glab MRs", lambda: self.run_external_command(["glab", "mr", "list"]), False),
-            ("Gitee repos", self.gitee_list_repos, False),
-            ("Create GitHub Repo...", self.create_remote_repository, True),
+            ("Accounts", self.show_user_accounts, False),
+            ("SSH Setup", self.configure_provider_ssh_from_menu, False),
+            ("HTTPS Setup", self.configure_provider_https_from_menu, False),
+            ("Test Auth", self.test_provider_auth_from_menu, False),
+            ("Install gh", self.install_gh_cli, False),
+            ("Install glab", self.install_glab_cli, False),
+            ("gh Page", self.show_github_cli_page, False),
+            ("glab Page", self.show_gitlab_cli_page, False),
         ])
+
+        custom_entries: list[tuple[str, Callable[[], None], bool]] = [
+            ("Add Custom", self.add_custom_button, False),
+            ("Delete", self.delete_custom_button, False),
+        ]
+        for item in getattr(self, "custom_buttons", []):
+            name = item.get("name", "")
+            commands = item.get("commands", "")
+            if name and commands:
+                custom_entries.append((name, lambda cmds=commands: self.run_custom_button_commands(cmds), True))
+        custom_box = add_group("Custom", custom_entries)
+        custom_box.setToolTip(
+            "用户自定义按钮。暴露接口：window.register_custom_button('Name', 'git status\\ngit fetch --all --prune')"
+        )
         layout.addStretch(1)
-        self.context_scroll.setWidget(self.context_panel)
 
     def _strip_workspace_buttons(self) -> None:
         """Keep the central workspace read-only/inspection oriented.
@@ -711,15 +755,15 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "tabs"):
             return
         for button in self.tabs.findChildren(QPushButton):
+            if hasattr(self, "platform_tabs") and self.platform_tabs.isAncestorOf(button):
+                button.show()
+                button.setEnabled(True)
+                continue
             button.hide()
             button.setEnabled(False)
 
     def _build_visible_top_menus(self) -> None:
-        """Render full Git menus inside the template top bar.
-
-        This is separate from the native QMenuBar, because users expect the
-        template's top row itself to expose repository operations.
-        """
+        """Render a compact menu set inside the template top bar."""
         def add_button(title: str, entries: list[tuple[str, object] | None]) -> None:
             button = QToolButton()
             button.setObjectName("topMenuButton")
@@ -737,97 +781,44 @@ class MainWindow(QMainWindow):
             self.top_bar.menu_layout.addWidget(button)
 
         add_button("文件", [
-            ("打开本地仓库...", self.open_repository),
-            ("创建/初始化本地仓库...", self.init_repository),
-            ("Clone 远程仓库...", self.clone_repository),
+            ("打开仓库...", self.open_repository),
+            ("Clone...", self.clone_repository),
+            ("初始化...", self.init_repository),
             ("打开仓库文件夹", self.open_repo_folder),
-            ("创建 GitHub 远程仓库...", self.create_remote_repository),
-            None,
-            ("刷新全部", self.refresh_all),
-        ])
-        add_button("仓库", [
-            ("Status -sb", lambda: self.run_git_command(["status", "-sb"], callback=lambda _: self.refresh_all())),
-            ("查看配置", lambda: self.run_git_command(["config", "--list", "--show-origin"], callback=self.show_result_in_log)),
-            ("设置 user.name...", self.set_git_user_name),
-            ("设置 user.email...", self.set_git_user_email),
+            ("刷新", self.refresh_all),
         ])
         add_button("更改", [
-            ("git add -A / 添加全部", lambda: self.run_git_command(["add", "-A"], callback=lambda _: self.refresh_all())),
-            ("Unstage All", lambda: self.run_git_command(["restore", "--staged", "."], callback=lambda _: self.refresh_all())),
-            ("Add All + Commit...", self.commit_changes),
+            ("git add -A", lambda: self.run_git_command(["add", "-A"], callback=lambda _: self.refresh_all())),
             ("Commit Only...", self.commit_staged_only),
+            ("Add + Commit...", self.commit_changes),
             ("Diff", lambda: self.run_git_command(["diff"], callback=self.show_result_in_log)),
             ("Diff --staged", lambda: self.run_git_command(["diff", "--staged"], callback=self.show_result_in_log)),
         ])
         add_button("分支", [
-            ("创建分支...", self.create_branch_from_menu),
+            ("新建分支...", self.create_branch_from_menu),
             ("切换分支...", self.switch_branch_from_menu),
             ("Merge...", self.merge_branch_from_menu),
             ("Rebase...", self.rebase_branch_from_menu),
-            ("打开分支页", lambda: self.tabs.setCurrentIndex(2) if hasattr(self, "tabs") else None),
-            ("Reflog", lambda: self.run_git_command(["reflog", "--date=iso"], callback=self.show_result_in_log)),
+            ("分支图", lambda: self.tabs.setCurrentIndex(2) if hasattr(self, "tabs") else None),
         ])
         add_button("远程", [
-            ("Remote -v", lambda: self.run_git_command(["remote", "-v"], callback=self.show_result_in_log)),
-            ("添加 Remote...", self.add_remote),
-            ("Fetch", lambda: self.run_git_command(["fetch"], callback=lambda _: self.refresh_all(), timeout=300)),
             ("Fetch --all --prune", lambda: self.run_git_command(["fetch", "--all", "--prune"], callback=lambda _: self.refresh_all(), timeout=300)),
-            ("Pull", lambda: self.run_git_command(["pull"], callback=lambda _: self.refresh_all(), timeout=300)),
             ("Pull --ff-only", lambda: self.run_git_command(["pull", "--ff-only"], callback=lambda _: self.refresh_all(), timeout=300)),
-            ("Pull --rebase", lambda: self.run_git_command(["pull", "--rebase"], callback=lambda _: self.refresh_all(), timeout=300)),
             ("Push", lambda: self.run_git_command(["push"], callback=lambda _: self.refresh_all(), timeout=300)),
-            ("Push -u...", self.push_current_branch_upstream_from_menu),
-            ("Push --tags", lambda: self.run_git_command(["push", "--tags"], callback=lambda _: self.refresh_all(), timeout=300)),
-            ("删除远程分支...", self.delete_remote_branch),
+            ("Remote -v", lambda: self.run_git_command(["remote", "-v"], callback=self.show_result_in_log)),
+            ("远程配置", self.show_ssh_remote_info),
         ])
-        add_button("标签", [
-            ("创建标签...", self.create_tag_from_menu),
-            ("Tag 列表", lambda: self.tabs.setCurrentIndex(4) if hasattr(self, "tabs") else None),
-            ("Push --tags", lambda: self.run_git_command(["push", "--tags"], callback=lambda _: self.refresh_all(), timeout=300)),
-            ("Stash Push -u", self.stash_push),
-            ("Stash List", lambda: self.run_git_command(["stash", "list"], callback=self.show_result_in_log)),
-            ("Stash Pop Selected", self.stash_pop),
-        ])
-        add_button("高级", [
+        add_button("工具", [
             ("全部 Git 命令", lambda: self.tabs.setCurrentIndex(7) if hasattr(self, "tabs") else None),
             ("Object Inspector", lambda: self.tabs.setCurrentIndex(6) if hasattr(self, "tabs") else None),
-            ("Cherry-pick...", self.cherry_pick_from_menu),
-            ("Revert...", self.revert_from_menu),
-            ("Reset --hard...", self.reset_hard_from_menu),
-            None,
-            ("Worktree List", lambda: self.run_git_command(["worktree", "list"], callback=self.show_result_in_log)),
-            ("Worktree Add...", self.worktree_add_from_menu),
-            ("Worktree Remove...", self.worktree_remove_from_menu),
-            ("Submodule Status", lambda: self.run_git_command(["submodule", "status", "--recursive"], callback=self.show_result_in_log, timeout=300)),
-            ("Submodule Add...", self.submodule_add_from_menu),
-            ("Submodule Update --init --recursive", lambda: self.run_git_command(["submodule", "update", "--init", "--recursive"], callback=self.show_result_in_log, timeout=900)),
-            ("LFS Status", lambda: self.run_git_command(["lfs", "status"], callback=self.show_result_in_log, timeout=300)),
-            ("LFS Track...", self.lfs_track_from_menu),
-            ("Bisect Start", lambda: self.run_git_command(["bisect", "start"], callback=self.show_result_in_log)),
-            ("Bisect Good...", self.bisect_good_from_menu),
-            ("Bisect Bad...", self.bisect_bad_from_menu),
-            ("Bisect Reset", lambda: self.run_git_command(["bisect", "reset"], callback=self.show_result_in_log)),
-            ("fsck --full", lambda: self.run_git_command(["fsck", "--full"], callback=self.show_result_in_log, timeout=300)),
-            ("gc", lambda: self.run_git_command(["gc"], callback=self.show_result_in_log, timeout=300)),
-            ("count-objects -vH", lambda: self.run_git_command(["count-objects", "-vH"], callback=self.show_result_in_log)),
-        ])
-        add_button("平台", [
-            ("GitHub auth status", lambda: self.run_external_command(["gh", "auth", "status"])),
-            ("GitHub repo list", lambda: self.run_external_command(["gh", "repo", "list", "--limit", "50"])),
-            ("GitHub create repo...", self.create_remote_repository),
-            ("GitLab auth status", lambda: self.run_external_command(["glab", "auth", "status"])),
-            ("打开平台页", lambda: self.tabs.setCurrentIndex(8) if hasattr(self, "tabs") else None),
+            ("平台账户", self.show_user_accounts),
+            ("Raw Terminal", lambda: (self.set_bottom_panel_visible(True), self.raw_command.setFocus()) if hasattr(self, "raw_command") else None),
         ])
         add_button("视图", [
             ("显示/隐藏左侧栏", self.toggle_left_sidebar),
             ("显示/隐藏右侧栏", self.toggle_right_sidebar),
             ("显示/隐藏底部终端", self.toggle_bottom_panel),
             ("放大/缩小终端", self.toggle_bottom_maximized),
-            None,
-            ("工作区", lambda: self.tabs.setCurrentIndex(0) if hasattr(self, "tabs") else None),
-            ("历史", lambda: self.tabs.setCurrentIndex(1) if hasattr(self, "tabs") else None),
-            ("分支", lambda: self.tabs.setCurrentIndex(2) if hasattr(self, "tabs") else None),
-            ("远程", lambda: self.tabs.setCurrentIndex(3) if hasattr(self, "tabs") else None),
         ])
 
     def activate_activity_tab(self, index: int, tab_index: int) -> None:
@@ -1096,39 +1087,68 @@ class MainWindow(QMainWindow):
         self,
         title: str,
         message: str,
-        fields: list[tuple[str, str, str, bool]],
+        fields: list[tuple],
         callback: Callable[[dict[str, str]], None],
     ) -> None:
-        """Show a workspace-covering form with all required inputs at once."""
+        """Show a workspace-covering form with all required inputs at once.
+
+        Field tuple format remains backward-compatible:
+            (key, label, default, password)
+        Optional fifth item can be "folder" to force a folder picker button.
+        """
         if hasattr(self, "terminal_stack") and hasattr(self, "terminal_content"):
             self.terminal_stack.setCurrentWidget(self.terminal_content)
         self.workspace_prompt_callback = callback
         self.workspace_prompt_title.setText(self.t(self._language_key(title, "prompt.title"), title))
         self.workspace_prompt_message.setText(self.t(self._language_key(message, "prompt.message"), message))
         self._clear_workspace_prompt_form()
+        self.workspace_prompt_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.workspace_prompt_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.workspace_prompt_fields = {}
         first_input = None
-        for key, label, default, password in fields:
-            suggestions = [] if password else self._field_suggestions(key, label)
+        for raw_field in fields:
+            key, label, default, password = raw_field[:4]
+            kind = raw_field[4] if len(raw_field) >= 5 else "auto"
+            suggestions = [] if password else self._field_suggestions(str(key), str(label))
             if suggestions:
                 edit = QComboBox()
                 edit.setObjectName("workspacePromptInput")
                 edit.setEditable(True)
                 edit.addItems(suggestions)
                 if default:
-                    edit.setCurrentText(default)
+                    edit.setCurrentText(str(default))
                 edit.lineEdit().returnPressed.connect(self._submit_workspace_prompt)
                 edit.setMinimumHeight(34)
+                edit.setMaximumWidth(380)
+                edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             else:
                 edit = QLineEdit()
                 edit.setObjectName("workspacePromptInput")
-                edit.setText(default)
+                edit.setText(str(default))
                 edit.setEchoMode(QLineEdit.EchoMode.Password if password else QLineEdit.EchoMode.Normal)
                 edit.returnPressed.connect(self._submit_workspace_prompt)
                 edit.setMinimumHeight(34)
-            translated_label = self.t(self._language_key(label, "prompt.label"), label)
-            self.workspace_prompt_form.addRow(translated_label, edit)
-            self.workspace_prompt_fields[key] = edit
+                edit.setMinimumWidth(120)
+                edit.setMaximumWidth(380)
+                edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            translated_label = self.t(self._language_key(str(label), "prompt.label"), str(label))
+            needs_folder = self._is_folder_field(str(key), str(label), kind)
+            if needs_folder:
+                row = QHBoxLayout()
+                row.setContentsMargins(0, 0, 0, 0)
+                row.setSpacing(4)
+                row.addWidget(edit)
+                browse = QPushButton("📁")
+                browse.setObjectName("folderBrowseButton")
+                browse.setToolTip("从资源管理器选择文件夹；路径不存在时会自动创建")
+                browse.setFixedWidth(34)
+                browse.clicked.connect(lambda _=False, e=edit, l=str(label): self._browse_folder_into(e, l))
+                row.addWidget(browse)
+                row.addStretch(1)
+                self.workspace_prompt_form.addRow(translated_label, row)
+            else:
+                self.workspace_prompt_form.addRow(translated_label, edit)
+            self.workspace_prompt_fields[str(key)] = edit
             if first_input is None:
                 first_input = edit
         self.workspace_overlay.setVisible(True)
@@ -1140,6 +1160,35 @@ class MainWindow(QMainWindow):
                 first_input.selectAll()
             elif hasattr(first_input, "lineEdit") and first_input.lineEdit() is not None:
                 first_input.lineEdit().selectAll()
+
+    def _is_folder_field(self, key: str, label: str, kind: object = "auto") -> bool:
+        if str(kind).lower() in {"folder", "directory", "dir"}:
+            return True
+        text = f"{key} {label}".lower()
+        return any(token in text for token in ["目录", "folder", "directory", "dir", "父目录", "worktree 路径"])
+
+    def _browse_folder_into(self, edit, label: str = "") -> None:
+        current = ""
+        if hasattr(edit, "currentText"):
+            current = edit.currentText()
+        elif hasattr(edit, "text"):
+            current = edit.text()
+        base = Path(current).expanduser() if current else Path.cwd()
+        if not base.exists():
+            base = base.parent if base.suffix else base
+        directory = QFileDialog.getExistingDirectory(self, f"选择{label or '文件夹'}", str(base if base.exists() else Path.cwd()))
+        if not directory:
+            return
+        path = Path(directory).expanduser()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            QMessageBox.warning(self, "目录创建失败", f"无法创建目录：{path}\n{exc}")
+            return
+        if hasattr(edit, "setCurrentText"):
+            edit.setCurrentText(str(path))
+        elif hasattr(edit, "setText"):
+            edit.setText(str(path))
 
     def _clear_workspace_prompt_form(self) -> None:
         if not hasattr(self, "workspace_prompt_form"):
@@ -1332,11 +1381,17 @@ class MainWindow(QMainWindow):
             if not path:
                 self.append_log("Worktree Add 已取消：缺少路径。")
                 return
-            self.run_git_command(["worktree", "add", path] + ([ref] if ref else []), callback=lambda _: self.refresh_all(), timeout=300)
+            target = Path(path).expanduser()
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                self.append_log(f"Worktree Add 已取消：父目录无法创建：{target.parent}\n{exc}")
+                return
+            self.run_git_command(["worktree", "add", str(target)] + ([ref] if ref else []), callback=lambda _: self.refresh_all(), timeout=300)
         self.request_workspace_form(
             "Worktree Add",
             "一次性输入 worktree 路径和可选 ref。",
-            [("path", "worktree 路径", "", False), ("ref", "分支 / commit / ref", "", False)],
+            [("path", "worktree 路径", "", False, "folder"), ("ref", "分支 / commit / ref", "", False)],
             submitted,
         )
 
@@ -1354,11 +1409,19 @@ class MainWindow(QMainWindow):
             if not url:
                 self.append_log("Submodule Add 已取消：缺少 URL。")
                 return
+            if path:
+                target = Path(path).expanduser()
+                try:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                except Exception as exc:
+                    self.append_log(f"Submodule Add 已取消：父目录无法创建：{target.parent}\n{exc}")
+                    return
+                path = str(target)
             self.run_git_command(["submodule", "add", url] + ([path] if path else []), callback=lambda _: self.refresh_all(), timeout=900)
         self.request_workspace_form(
             "Submodule Add",
             "一次性输入子模块 URL 和可选本地路径。",
-            [("url", "子模块 URL", "", False), ("path", "本地路径", "", False)],
+            [("url", "子模块 URL", "", False), ("path", "本地路径", "", False, "folder")],
             submitted,
         )
 
@@ -1460,10 +1523,17 @@ class MainWindow(QMainWindow):
         diff_page = QWidget()
         diff_layout = QVBoxLayout(diff_page)
         diff_layout.setContentsMargins(0, 0, 0, 0)
-        self.diff_view = QPlainTextEdit()
-        self.diff_view.setReadOnly(True)
-        self.diff_view.setPlaceholderText("选择文件后显示 git diff / git diff --staged")
-        diff_layout.addWidget(self.diff_view, 1)
+        diff_hint = QLabel("Diff 以折叠树展示：文件 -> file/header -> hunk -> 具体变更行。新增/删除/元信息会高亮。")
+        diff_hint.setWordWrap(True)
+        diff_layout.addWidget(diff_hint)
+        self.diff_tree = QTreeWidget()
+        self.diff_tree.setColumnCount(3)
+        self.diff_tree.setHeaderLabels(["范围", "路径 / Hunk", "内容"])
+        self.diff_tree.setAlternatingRowColors(True)
+        self.diff_tree.setUniformRowHeights(False)
+        self.diff_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.diff_tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        diff_layout.addWidget(self.diff_tree, 1)
         workspace_tabs.addTab(diff_page, "Diff")
 
         # Hidden compatibility buttons. Actions are exposed in the right ACTIONS bar.
@@ -1580,6 +1650,8 @@ class MainWindow(QMainWindow):
         graph_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.branch_graph_view = CommitGraphView()
         self.branch_graph_view.set_theme(self.theme_mode)
+        self.branch_graph_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.branch_graph_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.branch_graph_view.commitSelected.connect(self.graph_commit_selected)
         self.branch_graph_view.commitHovered.connect(self.graph_commit_selected)
         self.branch_graph_view.commitActivated.connect(self.graph_checkout_commit)
@@ -1589,6 +1661,8 @@ class MainWindow(QMainWindow):
         self.branch_graph_detail.setHeaderHidden(True)
         self.branch_graph_detail.setMinimumWidth(260)
         self.branch_graph_detail.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.branch_graph_detail.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.branch_graph_detail.setTextElideMode(Qt.TextElideMode.ElideNone)
         self._set_branch_graph_detail_message("鼠标悬浮或单击图节点后显示 commit 详情")
         graph_splitter.addWidget(self.branch_graph_detail)
         graph_splitter.setChildrenCollapsible(False)
@@ -1904,10 +1978,15 @@ class MainWindow(QMainWindow):
         self.github_status_label.setWordWrap(True)
         github_layout.addWidget(self.github_status_label)
         add_command_grid(github_layout, "GitHub 初始化 / 账号", [
+            ("一键安装 gh", self.install_gh_cli),
+            ("GitHub CLI 页", self.show_github_cli_page),
             ("检查 gh", ["gh", "--version"]),
             ("gh auth status", ["gh", "auth", "status"]),
             ("gh auth login", ["gh", "auth", "login"]),
             ("gh auth setup-git", ["gh", "auth", "setup-git"]),
+            ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
+            ("HTTPS 配置", self.configure_provider_https_from_menu),
+            ("认证测试", self.test_provider_auth_from_menu),
         ])
         add_command_grid(github_layout, "GitHub 仓库 / 协作", [
             ("创建仓库...", self.create_remote_repository),
@@ -1932,10 +2011,15 @@ class MainWindow(QMainWindow):
         self.gitlab_status_label.setWordWrap(True)
         gitlab_layout.addWidget(self.gitlab_status_label)
         add_command_grid(gitlab_layout, "GitLab 初始化 / 账号", [
+            ("一键安装 glab", self.install_glab_cli),
+            ("GitLab CLI 页", self.show_gitlab_cli_page),
             ("检查 glab", ["glab", "--version"]),
             ("glab auth status", ["glab", "auth", "status"]),
             ("glab auth login", ["glab", "auth", "login"]),
             ("glab config list", ["glab", "config", "list"]),
+            ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
+            ("HTTPS 配置", self.configure_provider_https_from_menu),
+            ("认证测试", self.test_provider_auth_from_menu),
         ])
         add_command_grid(gitlab_layout, "GitLab 项目 / 协作", [
             ("repo list", ["glab", "repo", "list"]),
@@ -1948,6 +2032,66 @@ class MainWindow(QMainWindow):
         ])
         gitlab_layout.addStretch(1)
         platform_tabs.addTab(gitlab, "GitLab")
+
+        github_cli = QWidget()
+        github_cli_layout = QVBoxLayout(github_cli)
+        github_cli_tip = QLabel("GitHub CLI 新页面：安装 gh 后会自动跳转到这里。常用 repo / PR / Issue / Release / Actions 操作提供交互式入口。")
+        github_cli_tip.setWordWrap(True)
+        github_cli_layout.addWidget(github_cli_tip)
+        add_command_grid(github_cli_layout, "安装 / 认证 / 配置", [
+            ("一键安装 gh", self.install_gh_cli),
+            ("gh auth login", ["gh", "auth", "login"]),
+            ("gh auth status", ["gh", "auth", "status"]),
+            ("gh auth setup-git", ["gh", "auth", "setup-git"]),
+            ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
+            ("HTTPS 配置", self.configure_provider_https_from_menu),
+        ])
+        add_command_grid(github_cli_layout, "Repo / PR / Issue 交互式", [
+            ("repo clone...", self.gh_repo_clone_interactive),
+            ("repo create...", self.gh_repo_create_interactive),
+            ("repo view", ["gh", "repo", "view"]),
+            ("repo list", ["gh", "repo", "list", "--limit", "50"]),
+            ("PR create...", self.gh_pr_create_interactive),
+            ("PR checkout...", self.gh_pr_checkout_interactive),
+            ("PR list", ["gh", "pr", "list"]),
+            ("PR status", ["gh", "pr", "status"]),
+            ("Issue create...", self.gh_issue_create_interactive),
+            ("Issue list", ["gh", "issue", "list"]),
+            ("Release list", ["gh", "release", "list"]),
+            ("Actions runs", ["gh", "run", "list"]),
+        ])
+        github_cli_layout.addStretch(1)
+        platform_tabs.addTab(github_cli, "GitHub CLI")
+
+        gitlab_cli = QWidget()
+        gitlab_cli_layout = QVBoxLayout(gitlab_cli)
+        gitlab_cli_tip = QLabel("GitLab CLI 新页面：安装 glab 后会自动跳转到这里。常用 repo / MR / Issue / Pipeline / Release 操作提供交互式入口。")
+        gitlab_cli_tip.setWordWrap(True)
+        gitlab_cli_layout.addWidget(gitlab_cli_tip)
+        add_command_grid(gitlab_cli_layout, "安装 / 认证 / 配置", [
+            ("一键安装 glab", self.install_glab_cli),
+            ("glab auth login", ["glab", "auth", "login"]),
+            ("glab auth status", ["glab", "auth", "status"]),
+            ("glab config list", ["glab", "config", "list"]),
+            ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
+            ("HTTPS 配置", self.configure_provider_https_from_menu),
+        ])
+        add_command_grid(gitlab_cli_layout, "Repo / MR / Issue 交互式", [
+            ("repo clone...", self.glab_repo_clone_interactive),
+            ("repo create...", self.glab_repo_create_interactive),
+            ("repo view", ["glab", "repo", "view"]),
+            ("repo list", ["glab", "repo", "list"]),
+            ("MR create...", self.glab_mr_create_interactive),
+            ("MR checkout...", self.glab_mr_checkout_interactive),
+            ("MR list", ["glab", "mr", "list"]),
+            ("MR status", ["glab", "mr", "status"]),
+            ("Issue create...", self.glab_issue_create_interactive),
+            ("Issue list", ["glab", "issue", "list"]),
+            ("Pipeline list", ["glab", "pipeline", "list"]),
+            ("Release list", ["glab", "release", "list"]),
+        ])
+        gitlab_cli_layout.addStretch(1)
+        platform_tabs.addTab(gitlab_cli, "GitLab CLI")
 
         gitee = QWidget()
         gitee_layout = QVBoxLayout(gitee)
@@ -1978,6 +2122,9 @@ class MainWindow(QMainWindow):
         gitee_form.addRow(gitee_buttons)
         gitee_layout.addWidget(gitee_box)
         add_command_grid(gitee_layout, "Gitee / 自定义 Git 远程", [
+            ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
+            ("HTTPS 配置", self.configure_provider_https_from_menu),
+            ("认证测试", self.test_provider_auth_from_menu),
             ("remote -v", lambda: self.run_git_command(["remote", "-v"], callback=self.show_result_in_log)),
             ("添加 Remote...", self.add_remote),
             ("设置 Remote URL...", self.set_remote_url),
@@ -2209,15 +2356,19 @@ class MainWindow(QMainWindow):
             if button.text() and not button.toolTip():
                 button.setToolTip(button.text())
         for line_edit in self.findChildren(QLineEdit):
-            if line_edit.objectName() == "workspacePromptInput":
-                line_edit.setMinimumWidth(260)
-                line_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-                continue
-            line_edit.setMinimumWidth(0)
-            line_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            name = line_edit.objectName()
+            line_edit.setMinimumWidth(88)
+            if name in {"commandCenter", "rawCommandInput", "terminalInput"}:
+                line_edit.setMaximumWidth(520)
+            elif name == "workspacePromptInput":
+                line_edit.setMaximumWidth(380)
+            else:
+                line_edit.setMaximumWidth(280)
+            line_edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         for combo in self.findChildren(QComboBox):
-            combo.setMinimumWidth(0)
-            combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            combo.setMinimumWidth(96)
+            combo.setMaximumWidth(360)
+            combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         for tree in self.findChildren(QTreeWidget):
             tree.setMinimumWidth(0)
             tree.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
@@ -2467,14 +2618,17 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def show_ssh_remote_info(self) -> None:
         text = (
-            "Remote push 通常需要以下配置：\n"
-            "1. SSH key：推荐 ed25519，私钥保存在本机，公钥配置到 GitHub/GitLab/Gitee。\n"
-            "2. ssh-agent：私钥需要加入 agent，避免每次输入密码。\n"
-            "3. Remote URL：SSH 格式通常为 git@host:owner/repo.git；HTTPS 需要 credential helper 或 token。\n"
-            "4. credential.helper：HTTPS 推送建议使用系统凭据管理器。\n\n"
-            "右侧 ACTIONS > Remote 提供生成 key、ssh-add、SSH 测试和 credential helper 配置入口。"
+            "Remote push 认证配置入口：\n"
+            "1. GitHub / GitLab / Gitee 支持多账号 SSH：每个账号生成独立 key，并写入 ~/.ssh/config Host alias。\n"
+            "2. SSH 一键配置会自动执行 ssh-keygen、ssh-add、ssh -T 测试；输出中会展示需要复制到平台的公钥。\n"
+            "3. HTTPS 一键配置会设置 credential.helper，更新当前仓库 remote URL，并执行 git ls-remote 测试。\n"
+            "4. GitHub / GitLab 支持一键安装 gh / glab；安装结束后会跳转到新的 GitHub CLI / GitLab CLI 页面。\n"
+            "5. 右侧 ACTIONS > Platform 提供 SSH Setup / HTTPS Setup / Test Auth / Install gh / Install glab。"
         )
-        self.remote_output.setPlainText(text if hasattr(self, "remote_output") else text)
+        if hasattr(self, "remote_output"):
+            self.remote_output.setPlainText(text)
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(text)
         self.append_log(text)
 
     def generate_ssh_key_from_menu(self) -> None:
@@ -2532,6 +2686,11 @@ class MainWindow(QMainWindow):
         directory = QFileDialog.getExistingDirectory(self, "打开 Git 仓库")
         if not directory:
             return
+        try:
+            Path(directory).expanduser().mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            QMessageBox.warning(self, "目录创建失败", f"无法创建目录：{directory}\n{exc}")
+            return
         self.runner.set_repo(directory)
         check = self.runner.run(["rev-parse", "--is-inside-work-tree"])
         if not check.ok:
@@ -2548,6 +2707,11 @@ class MainWindow(QMainWindow):
         directory = QFileDialog.getExistingDirectory(self, "选择要初始化的目录")
         if not directory:
             return
+        try:
+            Path(directory).expanduser().mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            QMessageBox.warning(self, "目录创建失败", f"无法创建目录：{directory}\n{exc}")
+            return
         self.runner.set_repo(directory)
         self.run_git_command(["init"], callback=lambda _: (self._remember_repository(directory), self.refresh_all()))
 
@@ -2559,7 +2723,12 @@ class MainWindow(QMainWindow):
                 self.append_log("Clone 已取消：缺少远程 URL 或目标父目录。")
                 return
             parent = Path(dest).expanduser().resolve()
-            if not parent.exists() or not parent.is_dir():
+            try:
+                parent.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                self.append_log(f"Clone 已取消：目标父目录无法创建：{parent}\n{exc}")
+                return
+            if not parent.is_dir():
                 self.append_log(f"Clone 已取消：目标父目录不是有效目录：{parent}")
                 return
             self.runner.repo_path = parent
@@ -2567,7 +2736,7 @@ class MainWindow(QMainWindow):
         self.request_workspace_form(
             "Clone 远程仓库",
             "一次性输入远程 URL 和目标父目录。",
-            [("url", "远程 URL", "", False), ("dest", "目标父目录", str(Path.cwd()), False)],
+            [("url", "远程 URL", "", False), ("dest", "目标父目录", str(Path.cwd()), False, "folder")],
             submitted,
         )
 
@@ -2641,6 +2810,8 @@ class MainWindow(QMainWindow):
         for widget in (self.changed_list, self.staged_list, self.untracked_list):
             widget.clear()
         if not self.runner.repo_path:
+            if hasattr(self, "diff_tree"):
+                self.diff_tree.clear()
             return
         for item in self.runner.parse_status():
             list_item = QListWidgetItem(item.display)
@@ -2654,6 +2825,7 @@ class MainWindow(QMainWindow):
                     self.staged_list.addItem(staged_item)
                 if item.changed:
                     self.changed_list.addItem(list_item)
+        self.refresh_diff_tree()
 
     def _selected_status_item(self) -> Tuple[Optional[str], str]:
         for name, widget in [("staged", self.staged_list), ("changed", self.changed_list), ("untracked", self.untracked_list)]:
@@ -2694,17 +2866,110 @@ class MainWindow(QMainWindow):
     def show_selected_diff(self) -> None:
         path, area = self._selected_status_item()
         if not path:
+            self.refresh_diff_tree()
             return
         args = ["diff", "--staged", "--", path] if area == "staged" else ["diff", "--", path]
         result = self.runner.run(args)
-        self.diff_view.setPlainText(self._format_diff_output(result.output) if result.output else "(no diff)")
+        self.diff_tree.clear()
+        title = "Staged" if area == "staged" else ("Untracked" if area == "untracked" else "Working tree")
+        if area == "untracked":
+            root = QTreeWidgetItem([title, path, "未跟踪文件没有 git diff；使用 git add 后可查看 staged diff。"])
+            self.diff_tree.addTopLevelItem(root)
+        else:
+            self._append_diff_to_tree(title, result.output)
+        self._resize_diff_tree_columns()
+
+    def refresh_diff_tree(self) -> None:
+        if not hasattr(self, "diff_tree"):
+            return
+        self.diff_tree.clear()
+        if not self.runner.repo_path:
+            return
+        staged = self.runner.run(["diff", "--staged", "--patch", "--find-renames", "--find-copies"])
+        working = self.runner.run(["diff", "--patch", "--find-renames", "--find-copies"])
+        any_diff = False
+        if staged.output.strip():
+            self._append_diff_to_tree("Staged", staged.output)
+            any_diff = True
+        if working.output.strip():
+            self._append_diff_to_tree("Working tree", working.output)
+            any_diff = True
+        if not any_diff:
+            root = QTreeWidgetItem(["Diff", "-", "没有已跟踪文件变更。未跟踪文件需 git add 后才会出现完整 diff。"])
+            self.diff_tree.addTopLevelItem(root)
+        self._resize_diff_tree_columns()
+
+    def _append_diff_to_tree(self, scope: str, diff: str) -> None:
+        current_file: QTreeWidgetItem | None = None
+        file_node: QTreeWidgetItem | None = None
+        current_hunk: QTreeWidgetItem | None = None
+        file_path = ""
+        additions = QBrush(QColor("#22c55e"))
+        deletions = QBrush(QColor("#ef4444"))
+        meta = QBrush(QColor("#f59e0b"))
+        hunk_brush = QBrush(QColor("#60a5fa"))
+
+        def ensure_file(path: str) -> QTreeWidgetItem:
+            nonlocal current_file, file_node, current_hunk, file_path
+            if current_file is None or path != file_path:
+                file_path = path or "(unknown)"
+                current_file = QTreeWidgetItem([scope, file_path, ""])
+                current_file.setExpanded(False)
+                self.diff_tree.addTopLevelItem(current_file)
+                file_node = QTreeWidgetItem(["file", file_path, "header / metadata"])
+                current_file.addChild(file_node)
+                current_hunk = None
+            return current_file
+
+        for raw in diff.splitlines():
+            line = raw.rstrip("\n")
+            if line.startswith("diff --git "):
+                parts = line.split()
+                path = parts[-1][2:] if len(parts) >= 4 and parts[-1].startswith("b/") else line
+                root = ensure_file(path)
+                header = QTreeWidgetItem(["file", path, line])
+                header.setForeground(2, meta)
+                root.addChild(header)
+                file_node = header
+                current_hunk = None
+                continue
+            if current_file is None:
+                ensure_file("(raw diff)")
+            if line.startswith("@@"):
+                current_hunk = QTreeWidgetItem(["hunk", file_path, line])
+                current_hunk.setForeground(2, hunk_brush)
+                current_file.addChild(current_hunk)
+                continue
+            if line.startswith("+++") or line.startswith("---") or line.startswith("index ") or line.startswith("new file") or line.startswith("deleted file") or line.startswith("similarity ") or line.startswith("rename "):
+                target = file_node or current_file
+                item = QTreeWidgetItem(["file", file_path, line])
+                item.setForeground(2, meta)
+                target.addChild(item)
+                continue
+            parent = current_hunk or file_node or current_file
+            kind = "context"
+            brush = None
+            if line.startswith("+"):
+                kind = "add"
+                brush = additions
+            elif line.startswith("-"):
+                kind = "del"
+                brush = deletions
+            item = QTreeWidgetItem([kind, file_path, line])
+            if brush is not None:
+                item.setForeground(2, brush)
+            parent.addChild(item)
+
+    def _resize_diff_tree_columns(self) -> None:
+        if not hasattr(self, "diff_tree"):
+            return
+        for i in range(3):
+            self.diff_tree.resizeColumnToContents(i)
 
     def _format_diff_output(self, diff: str) -> str:
         sections: list[str] = []
-        current_file = ""
         for line in diff.splitlines():
             if line.startswith("diff --git "):
-                current_file = line
                 sections.append("\n" + "=" * 72)
                 sections.append("File")
                 sections.append(f"  {line}")
@@ -2974,10 +3239,23 @@ class MainWindow(QMainWindow):
             lambda name: self.run_git_command(["switch", "-c", name.strip(), commit_hash], callback=lambda _: self.refresh_all()) if name.strip() else None,
         )
 
+    def graph_create_tag_from_commit(self, commit_hash: str) -> None:
+        def submitted(name: str) -> None:
+            tag = name.strip()
+            if not tag:
+                return
+            existing = self.runner.run(["tag", "--list", tag])
+            if existing.ok and any(line.strip() == tag for line in existing.stdout.splitlines()):
+                QMessageBox.warning(self, "标签已存在", f"不能创建已有标签：{tag}")
+                return
+            self.run_git_command(["tag", "-a", tag, commit_hash, "-m", tag], callback=lambda _: self.refresh_all())
+        self.request_terminal_text("在图节点打标签", "新标签名：", submitted)
+
     def graph_commit_context_menu(self, commit_hash: str, pos: QPoint) -> None:
         menu = QMenu(self)
         menu.addAction("Checkout this commit", lambda: self.graph_checkout_commit(commit_hash))
         menu.addAction("Create branch here", lambda: self.graph_create_branch_from_commit(commit_hash))
+        menu.addAction("Create tag here", lambda: self.graph_create_tag_from_commit(commit_hash))
         menu.addAction("Cherry-pick into current branch", lambda: self.run_git_command(["cherry-pick", commit_hash], callback=lambda _: self.refresh_all()))
         menu.addAction("Revert this commit", lambda: self.run_git_command(["revert", commit_hash], callback=lambda _: self.refresh_all()))
         menu.addAction("Reset current branch --hard here", lambda: self.run_git_command(["reset", "--hard", commit_hash], callback=lambda _: self.refresh_all()))
@@ -3330,6 +3608,449 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Platform helpers
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Custom ACTIONS buttons
+    # ------------------------------------------------------------------
+    def add_custom_button(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            name = values.get("name", "").strip()
+            commands = values.get("commands", "").strip()
+            if not name or not commands:
+                self.append_log("Custom 按钮未创建：名称或指令为空。")
+                return
+            if not self.register_custom_button(name, commands):
+                self.append_log("Custom 按钮未创建：名称重复或参数无效。")
+                return
+            self.append_log(f"已新增 Custom 按钮：{name}")
+        self.request_workspace_form(
+            "新增 Custom 按钮",
+            "自定义按钮会存放在右侧 ACTIONS 最后的 Custom 分组。commands 可输入一行或多行 shell/git 指令。",
+            [("name", "按钮名称", "", False), ("commands", "一行或多行指令", "git status -sb", False)],
+            submitted,
+        )
+
+    def delete_custom_button(self) -> None:
+        names = [item.get("name", "") for item in getattr(self, "custom_buttons", []) if item.get("name")]
+        if not names:
+            self.append_log("没有可删除的 Custom 按钮。")
+            return
+        def submitted(values: dict[str, str]) -> None:
+            name = values.get("name", "").strip()
+            before = len(self.custom_buttons)
+            self.custom_buttons = [item for item in self.custom_buttons if item.get("name") != name]
+            if len(self.custom_buttons) == before:
+                self.append_log(f"未找到 Custom 按钮：{name}")
+                return
+            self._save_custom_buttons()
+            self._rebuild_context_actions()
+            self.append_log(f"已删除 Custom 按钮：{name}")
+        self.request_workspace_form(
+            "删除 Custom 按钮",
+            "输入要删除的按钮名称。当前可选：" + ", ".join(names),
+            [("name", "按钮名称", names[0], False)],
+            submitted,
+        )
+
+    def run_custom_button_commands(self, commands: str) -> None:
+        commands = commands.strip()
+        if not commands:
+            return
+        self.run_shell_command(commands, callback=lambda _: self.refresh_all(), timeout=900)
+
+    # ------------------------------------------------------------------
+    # Platform CLI / SSH / HTTPS helpers
+    # ------------------------------------------------------------------
+    def _provider_host(self, provider: str) -> str:
+        provider = provider.strip().lower()
+        mapping = {
+            "github": "github.com",
+            "gitlab": "gitlab.com",
+            "gitee": "gitee.com",
+        }
+        return mapping.get(provider, provider or "github.com")
+
+    def _provider_name_from_host(self, host: str) -> str:
+        host = host.lower()
+        if "gitlab" in host:
+            return "gitlab"
+        if "gitee" in host:
+            return "gitee"
+        return "github"
+
+    def _safe_account_token(self, text: str) -> str:
+        cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in text.strip())
+        return cleaned.strip("-") or "default"
+
+    def _default_ssh_key_path(self, provider: str, account: str) -> str:
+        name = f"id_ed25519_{self._provider_name_from_host(self._provider_host(provider))}_{self._safe_account_token(account)}"
+        return str(Path.home() / ".ssh" / name)
+
+    def _shell_quote(self, value: str) -> str:
+        if os.name == "nt":
+            return subprocess.list2cmdline([value])
+        return shlex.quote(value)
+
+    def _write_temp_python_script(self, name: str, body: str) -> Path:
+        script_dir = self.config_path.parent / "scripts"
+        script_dir.mkdir(parents=True, exist_ok=True)
+        path = script_dir / name
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def _run_python_script_async(self, script_name: str, script_body: str, callback: Optional[Callable[[GitResult], None]] = None, timeout: int = 300) -> None:
+        script = self._write_temp_python_script(script_name, script_body)
+        command = f"{self._shell_quote(sys.executable)} {self._shell_quote(str(script))}"
+        self.run_shell_command(command, callback=callback, timeout=timeout)
+
+    def configure_provider_ssh_from_menu(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            provider = values.get("provider", "github").strip().lower() or "github"
+            account = values.get("account", "default").strip() or "default"
+            email = values.get("email", "").strip() or f"{account}@git-terminal"
+            key_path = values.get("key_path", "").strip() or self._default_ssh_key_path(provider, account)
+            remote_name = values.get("remote", "origin").strip() or "origin"
+            owner_repo = values.get("owner_repo", "").strip().strip("/")
+            apply_remote = values.get("apply_remote", "yes").strip().lower() in {"", "y", "yes", "1", "true", "是"}
+            host = self._provider_host(provider)
+            alias = f"{host}-{self._safe_account_token(account)}"
+            script = self._build_ssh_setup_python_script(host, alias, key_path, email)
+            def after(result: GitResult) -> None:
+                self._after_provider_ssh_setup(result, provider, alias, key_path, remote_name, owner_repo, apply_remote)
+            self._run_python_script_async("setup_provider_ssh.py", script, callback=after, timeout=300)
+        self.request_workspace_form(
+            "多用户 SSH 一键配置",
+            "为 GitHub / GitLab / Gitee 生成或复用独立 ed25519 key，写入 ~/.ssh/config 的 Host alias，自动 ssh 测试；可选同步修改当前仓库 remote URL。",
+            [
+                ("provider", "平台 github/gitlab/gitee", "github", False),
+                ("account", "账号标识", "default", False),
+                ("email", "Key 注释邮箱", "", False),
+                ("key_path", "SSH 私钥路径", self._default_ssh_key_path("github", "default"), False),
+                ("remote", "remote 名称", "origin", False),
+                ("owner_repo", "owner/repo", "", False),
+                ("apply_remote", "设置当前仓库 remote?", "yes", False),
+            ],
+            submitted,
+        )
+
+    def _build_ssh_setup_python_script(self, host: str, alias: str, key_path: str, email: str) -> str:
+        payload = {
+            "host": host,
+            "alias": alias,
+            "key_path": str(Path(key_path).expanduser()),
+            "email": email,
+        }
+        payload_text = json.dumps(json.dumps(payload))
+        return """from __future__ import annotations
+import json
+import os
+import subprocess
+from pathlib import Path
+cfg = json.loads(PAYLOAD_PLACEHOLDER)
+ssh_dir = Path.home() / ".ssh"
+ssh_dir.mkdir(parents=True, exist_ok=True)
+key_path = Path(cfg["key_path"]).expanduser()
+key_path.parent.mkdir(parents=True, exist_ok=True)
+if not key_path.exists():
+    print("Generating SSH key:", key_path)
+    subprocess.run(["ssh-keygen", "-t", "ed25519", "-C", cfg["email"], "-f", str(key_path), "-N", ""], check=True)
+else:
+    print("SSH key already exists:", key_path)
+try:
+    os.chmod(key_path, 0o600)
+except Exception as exc:
+    print("chmod warning:", exc)
+config_path = ssh_dir / "config"
+block = "\nHost {alias}\n  HostName {host}\n  User git\n  IdentityFile {key}\n  IdentitiesOnly yes\n".format(alias=cfg["alias"], host=cfg["host"], key=key_path)
+existing = config_path.read_text(encoding="utf-8", errors="replace") if config_path.exists() else ""
+if "Host " + cfg["alias"] not in existing:
+    with config_path.open("a", encoding="utf-8") as fh:
+        if existing and not existing.endswith("\n"):
+            fh.write("\n")
+        fh.write(block.lstrip("\n"))
+    print("Appended SSH config Host:", cfg["alias"])
+else:
+    print("SSH config Host already exists:", cfg["alias"])
+print("Trying ssh-add; it is OK if no agent is running.")
+subprocess.run(["ssh-add", str(key_path)], check=False)
+print("Public key; copy this to the platform SSH Keys page if it has not been added:")
+pub = Path(str(key_path) + ".pub")
+if pub.exists():
+    print(pub.read_text(encoding="utf-8", errors="replace").strip())
+print("Testing SSH alias:", cfg["alias"])
+proc = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-T", cfg["alias"]], text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=30)
+print(proc.stdout.strip())
+print(proc.stderr.strip())
+print("SSH_TEST_RETURN_CODE=", proc.returncode)
+""".replace("PAYLOAD_PLACEHOLDER", payload_text)
+
+    def _after_provider_ssh_setup(self, result: GitResult, provider: str, alias: str, key_path: str, remote_name: str, owner_repo: str, apply_remote: bool) -> None:
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(result.output)
+        okish = result.ok or "successfully authenticated" in result.output.lower() or "welcome" in result.output.lower()
+        if owner_repo and apply_remote and self.runner.repo_path:
+            ssh_url = f"git@{alias}:{owner_repo}.git"
+            self.run_git_command(["remote", "set-url", remote_name, ssh_url], callback=lambda _: self._test_remote_after_config(remote_name), timeout=300)
+            self.append_log(f"SSH 配置已写入，已设置 {remote_name} -> {ssh_url}，正在测试 remote。")
+        else:
+            self.append_log(("✓" if okish else "⚠") + f" SSH 配置完成。Host alias: {alias}；私钥: {key_path}。请确认公钥已添加到平台账号。")
+        self.refresh_platform_statuses()
+
+    def configure_provider_https_from_menu(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            provider = values.get("provider", "github").strip().lower() or "github"
+            host = self._provider_host(provider)
+            owner_repo = values.get("owner_repo", "").strip().strip("/")
+            remote_name = values.get("remote", "origin").strip() or "origin"
+            helper = values.get("helper", "manager-core").strip() or "manager-core"
+            if not owner_repo:
+                self.append_log("HTTPS 配置已取消：缺少 owner/repo。")
+                return
+            if not self.runner.repo_path:
+                self.append_log("HTTPS 配置已取消：需要先打开一个本地仓库。")
+                return
+            url = f"https://{host}/{owner_repo}.git"
+            command = "\n".join([
+                f"git config --global credential.helper {self._shell_quote(helper)}",
+                f"git remote set-url {self._shell_quote(remote_name)} {self._shell_quote(url)}",
+                f"git ls-remote {self._shell_quote(remote_name)}",
+            ])
+            self.run_shell_command(command, callback=lambda r: self._after_https_setup(r, remote_name, url), timeout=300)
+        self.request_workspace_form(
+            "HTTPS 一键配置",
+            "设置 credential.helper，修改当前仓库 remote 为 HTTPS，并自动执行 ls-remote 测试。",
+            [
+                ("provider", "平台 github/gitlab/gitee", "github", False),
+                ("owner_repo", "owner/repo", "", False),
+                ("remote", "remote 名称", "origin", False),
+                ("helper", "credential.helper", "manager-core", False),
+            ],
+            submitted,
+        )
+
+    def _after_https_setup(self, result: GitResult, remote_name: str, url: str) -> None:
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(result.output)
+        self.append_log(("✓" if result.ok else "⚠") + f" HTTPS remote 配置完成：{remote_name} -> {url}。ls-remote 已执行，详情见平台输出。")
+        self.refresh_all()
+
+    def _test_remote_after_config(self, remote_name: str) -> None:
+        self.run_git_command(["ls-remote", remote_name], callback=lambda r: self._after_remote_test(r, remote_name), timeout=300)
+
+    def _after_remote_test(self, result: GitResult, remote_name: str) -> None:
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(result.output)
+        self.append_log(("✓" if result.ok else "⚠") + f" remote 测试完成：{remote_name}。")
+        self.refresh_all()
+
+    def test_provider_auth_from_menu(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            provider = values.get("provider", "github").strip().lower() or "github"
+            account = values.get("account", "").strip()
+            remote_name = values.get("remote", "origin").strip() or "origin"
+            host = self._provider_host(provider)
+            ssh_target = f"{host}-{self._safe_account_token(account)}" if account else host
+            lines = [f"ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T {self._shell_quote(ssh_target)}"]
+            if self.runner.repo_path:
+                lines.append(f"git ls-remote {self._shell_quote(remote_name)}")
+            self.run_shell_command("\n".join(lines), callback=lambda r: self._after_auth_test(r, ssh_target, remote_name), timeout=120)
+        self.request_workspace_form(
+            "测试平台认证",
+            "测试 SSH Host 或多用户 Host alias；若当前已打开仓库，会同时测试 git ls-remote。",
+            [("provider", "平台 github/gitlab/gitee", "github", False), ("account", "账号标识，可空", "", False), ("remote", "remote 名称", "origin", False)],
+            submitted,
+        )
+
+    def _after_auth_test(self, result: GitResult, ssh_target: str, remote_name: str) -> None:
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(result.output)
+        self.append_log(("✓" if result.ok else "⚠") + f" 认证测试完成：SSH={ssh_target}, remote={remote_name}。")
+
+    def _cli_install_script(self, tool: str) -> str:
+        if os.name == "nt":
+            winget_id = "GitHub.cli" if tool == "gh" else "GitLab.cli"
+            return (
+                f"where {tool} && {tool} --version || "
+                f"(winget install --id {winget_id} -e --accept-package-agreements --accept-source-agreements || "
+                f"choco install {tool} -y || scoop install {tool}) && {tool} --version"
+            )
+        if sys.platform == "darwin":
+            return f"command -v {tool} >/dev/null 2>&1 || brew install {tool}; {tool} --version"
+        package = "gh" if tool == "gh" else "glab"
+        return f'''set -e
+if command -v {tool} >/dev/null 2>&1; then
+  {tool} --version
+elif command -v brew >/dev/null 2>&1; then
+  brew install {package}
+elif command -v apt-get >/dev/null 2>&1; then
+  sudo apt-get update && sudo apt-get install -y {package}
+elif command -v dnf >/dev/null 2>&1; then
+  sudo dnf install -y {package}
+elif command -v yum >/dev/null 2>&1; then
+  sudo yum install -y {package}
+elif command -v pacman >/dev/null 2>&1; then
+  sudo pacman -Sy --noconfirm {package}
+elif command -v snap >/dev/null 2>&1; then
+  sudo snap install {package}
+else
+  echo "No supported package manager found. Install {tool} manually, then rerun status."
+  exit 1
+fi
+{tool} --version
+'''
+
+    def install_gh_cli(self) -> None:
+        self.run_shell_command(self._cli_install_script("gh"), callback=lambda r: self._after_cli_install(r, "gh"), timeout=1200)
+
+    def install_glab_cli(self) -> None:
+        self.run_shell_command(self._cli_install_script("glab"), callback=lambda r: self._after_cli_install(r, "glab"), timeout=1200)
+
+    def _after_cli_install(self, result: GitResult, tool: str) -> None:
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(result.output)
+        self.append_log(("✓" if result.ok else "⚠") + f" {tool} 安装流程结束。")
+        self.refresh_platform_statuses()
+        if tool == "gh":
+            self.show_github_cli_page()
+        else:
+            self.show_gitlab_cli_page()
+
+    def _set_platform_tab_by_text(self, tab_text: str) -> None:
+        if not hasattr(self, "platform_tabs"):
+            return
+        for index in range(self.platform_tabs.count()):
+            if self.platform_tabs.tabText(index) == tab_text:
+                self.platform_tabs.setCurrentIndex(index)
+                return
+
+    def show_github_cli_page(self) -> None:
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentIndex(8)
+        self._set_platform_tab_by_text("GitHub CLI")
+
+    def show_gitlab_cli_page(self) -> None:
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentIndex(8)
+        self._set_platform_tab_by_text("GitLab CLI")
+
+    def gh_repo_clone_interactive(self) -> None:
+        self._cli_clone_interactive("gh")
+
+    def glab_repo_clone_interactive(self) -> None:
+        self._cli_clone_interactive("glab")
+
+    def _cli_clone_interactive(self, tool: str) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            repo = values.get("repo", "").strip()
+            parent = values.get("parent", str(Path.cwd())).strip() or str(Path.cwd())
+            if not repo:
+                self.append_log(f"{tool} clone 已取消：缺少仓库。")
+                return
+            parent_path = Path(parent).expanduser().resolve()
+            try:
+                parent_path.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                self.append_log(f"{tool} clone 已取消：父目录无法创建：{parent_path}\n{exc}")
+                return
+            command = f"cd {self._shell_quote(str(parent_path))}\n{tool} repo clone {self._shell_quote(repo)}"
+            self.run_shell_command(command, callback=lambda _: self.refresh_all(), timeout=900)
+        self.request_workspace_form(
+            f"{tool} repo clone",
+            "输入 owner/repo 或完整 URL，并选择 clone 父目录；目录不存在会自动创建。",
+            [("repo", "owner/repo 或 URL", "", False), ("parent", "clone 父目录", str(Path.cwd()), False, "folder")],
+            submitted,
+        )
+
+    def gh_repo_create_interactive(self) -> None:
+        self._repo_create_interactive("gh")
+
+    def glab_repo_create_interactive(self) -> None:
+        self._repo_create_interactive("glab")
+
+    def _repo_create_interactive(self, tool: str) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            name = values.get("name", "").strip()
+            visibility = values.get("visibility", "private").strip().lower() or "private"
+            if not name:
+                self.append_log(f"{tool} repo create 已取消：仓库名为空。")
+                return
+            vis_arg = "--public" if visibility == "public" else "--private"
+            source = " --source . --remote origin" if values.get("source", "yes").strip().lower() in {"", "yes", "y", "1", "true", "是"} else ""
+            command = f"{tool} repo create {self._shell_quote(name)} {vis_arg}{source}"
+            self.run_shell_command(command, callback=lambda _: self.refresh_all(), timeout=300)
+        self.request_workspace_form(
+            f"{tool} repo create",
+            "交互式创建远程仓库；source=yes 时尝试把当前目录作为源并设置 origin。",
+            [("name", "仓库名", "", False), ("visibility", "public/private", "private", False), ("source", "使用当前仓库作为 source?", "yes", False)],
+            submitted,
+        )
+
+    def gh_pr_create_interactive(self) -> None:
+        self._pr_mr_create_interactive("gh", "pr")
+
+    def glab_mr_create_interactive(self) -> None:
+        self._pr_mr_create_interactive("glab", "mr")
+
+    def _pr_mr_create_interactive(self, tool: str, kind: str) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            title = values.get("title", "").strip()
+            body = values.get("body", "").strip()
+            base = values.get("base", "").strip()
+            head = values.get("head", "").strip()
+            if not title:
+                self.append_log(f"{tool} {kind} create 已取消：标题为空。")
+                return
+            args = [tool, kind, "create", "--title", title]
+            if body:
+                args += ["--body", body]
+            if base:
+                args += ["--base", base]
+            if head:
+                args += ["--head", head]
+            self.run_shell_command(" ".join(self._shell_quote(x) for x in args), callback=lambda _: self.refresh_all(), timeout=300)
+        self.request_workspace_form(
+            f"{tool} {kind} create",
+            "交互式创建 PR/MR。base/head 可留空，由 CLI 使用默认值。",
+            [("title", "标题", "", False), ("body", "描述", "", False), ("base", "base", "", False), ("head", "head", "", False)],
+            submitted,
+        )
+
+    def gh_pr_checkout_interactive(self) -> None:
+        self._pr_mr_checkout_interactive("gh", "pr")
+
+    def glab_mr_checkout_interactive(self) -> None:
+        self._pr_mr_checkout_interactive("glab", "mr")
+
+    def _pr_mr_checkout_interactive(self, tool: str, kind: str) -> None:
+        self.request_terminal_text(
+            f"{tool} {kind} checkout",
+            "编号 / URL / 分支：",
+            lambda value: self.run_shell_command(f"{tool} {kind} checkout {self._shell_quote(value.strip())}", callback=lambda _: self.refresh_all(), timeout=300) if value.strip() else None,
+        )
+
+    def gh_issue_create_interactive(self) -> None:
+        self._issue_create_interactive("gh")
+
+    def glab_issue_create_interactive(self) -> None:
+        self._issue_create_interactive("glab")
+
+    def _issue_create_interactive(self, tool: str) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            title = values.get("title", "").strip()
+            body = values.get("body", "").strip()
+            if not title:
+                self.append_log(f"{tool} issue create 已取消：标题为空。")
+                return
+            args = [tool, "issue", "create", "--title", title]
+            if body:
+                args += ["--body", body]
+            self.run_shell_command(" ".join(self._shell_quote(x) for x in args), callback=lambda _: self.refresh_all(), timeout=300)
+        self.request_workspace_form(
+            f"{tool} issue create",
+            "交互式创建 issue。",
+            [("title", "标题", "", False), ("body", "描述", "", False)],
+            submitted,
+        )
+
     def gitee_list_repos(self) -> None:
         token = self.gitee_token.text().strip()
         user = self.gitee_user.text().strip()

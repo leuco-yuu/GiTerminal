@@ -206,9 +206,41 @@ git_terminal_project/
 
 高风险命令执行前会弹出二次确认。
 
-## v0.5.0 样式构建崩溃修复与静态检查
+## v0.4.3 界面修复与 Git 功能补强
 
-- 修复 v0.4.9 在 `build_qss()` 中因 QSS 大括号未转义导致的 `NameError: name 'background' is not defined`。
-- 清理已迁移掉的 `QInputDialog` 引用。
-- 增加静态检查：验证 `connect(self.xxx)` 引用的方法存在，避免再次出现缺失槽函数导致的启动崩溃。
-- 增加主题构建检查：在无 PyQt6 的测试环境中用 stub 导入 `theme.py`，验证 dark/light 与全部配色的 QSS 均可生成。
+- 去除原生 QMenuBar 占位空行，顶部只保留模板内菜单栏。
+- 底部栏删除无效标签页，只保留终端输出与底部输入框。
+- 恢复左侧栏、右侧栏、底部终端的展开/折叠按钮。
+- 左侧 Activity Bar 全部改为自绘 SVG 图标，并仅作为布局/导航入口，避免和工作区标签重复。
+- 工作区入口点击会切换到工作区并刷新状态。
+- 分支有向图改为主题一致背景、S 形曲线边、parent -> child 箭头方向、分支标签指向节点、节点仍保持日期短标签。
+- 顶部模板菜单补充标签/Stash、平台、视图、高级操作，并新增 cherry-pick、revert、reset --hard、worktree、submodule、LFS 等入口。
+
+## v0.5.3 更新
+
+- 所有输入提示重新改为覆盖中央工作区域，不再覆盖底部终端。
+- 工作区覆盖层固定显示：左上角“← 返回”、底部“取消 / 确定”。
+- 新增通用 `request_workspace_form()`，支持一次展示多个输入框。
+- Clone、创建 GitHub 仓库、Push -u、Worktree Add、Submodule Add、Add Remote、Set Remote URL、Delete Remote Branch、创建 Tag 等多参数操作改为一次性填写，不再分步弹出。
+- 保留单字段操作的兼容入口 `request_terminal_text()`，内部也统一走工作区覆盖层。
+
+## v0.7.0 更新
+
+- 深度精简顶部菜单和右侧 ACTIONS 栏，删除重复、低频、容易造成视觉拥挤的入口。
+- 保留高频操作：打开/克隆/初始化、add、commit、diff、分支、fetch/pull/push、tag/stash、平台账户。
+- 高级/低频功能统一保留在“全部 Git 命令”、Object Inspector 和 Raw Terminal 中，不再重复堆在右侧栏。
+- 右侧栏按钮分组更短，视觉负担更低；完整 Git 能力仍通过高级命令入口兜底。
+
+## v0.8.0 优化项
+
+- GitHub / GitLab / Gitee 支持多账号 SSH Host alias 配置：一键生成 ed25519 key、写入 `~/.ssh/config`、尝试 `ssh-add`、输出公钥并执行 `ssh -T` 测试。
+- 支持 HTTPS remote 配置：设置 `credential.helper`、更新当前仓库 remote URL，并自动执行 `git ls-remote` 测试。
+- GitHub / GitLab 新增一键安装 `gh` / `glab`，安装流程结束后跳转到新的 `GitHub CLI` / `GitLab CLI` 页面。
+- `GitHub CLI` / `GitLab CLI` 页面提供 repo clone/create、PR/MR create/checkout、Issue create/list、Release、Actions/Pipeline 等常用交互式入口。
+- 所有工作区表单中的目录类字段新增 📁 文件夹按钮；clone 父目录、CLI clone 父目录、worktree/submodule 父目录不存在时会自动创建。
+- 输入框改为内容优先的紧凑宽度，表单标签右对齐，避免输入框横向撑满页面。
+- Diff 标签页改为折叠树：文件 -> file/header -> hunk -> 具体变更行，并对新增、删除、hunk、元信息进行颜色高亮。
+- 有向图普通滚轮不再滚动画布，仅保留 Ctrl+滚轮缩放；右侧信息树保留独立纵向/横向滚动条。
+- 有向图右键菜单新增“Create tag here”，会拒绝创建已有标签。
+- 右侧 ACTIONS 分组可折叠，末尾新增 Custom 分组；用户可以新增/删除自定义按钮。
+- 暴露 `MainWindow.register_custom_button(name, commands, persist=True)` 接口，`commands` 支持一行或多行 shell/git 指令。
