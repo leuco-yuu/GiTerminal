@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import html
 import os
+import base64
+import re
 import shlex
 import shutil
 import subprocess
@@ -38,6 +40,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedLayout,
+    QStyle,
     QTabWidget,
     QTextEdit,
     QToolBar,
@@ -52,6 +55,7 @@ from git_terminal.core.commands import GitCommandSpec, build_command_catalog
 from git_terminal.core.models import GitResult, GitStatusItem, RiskLevel
 from git_terminal.core.runner import GitRunner
 from git_terminal.core.safety import classify_git_command
+from git_terminal.core.encoding import completed_process_text, decode_command_output, utf8_subprocess_env
 from git_terminal.ui.workers import GitCommandWorker, ShellCommandWorker
 from git_terminal.ui.theme import ACCENTS, apply_theme
 from git_terminal.i18n import LANGUAGE_MODES, LanguageService, make_key
@@ -65,16 +69,27 @@ class CloneDialog(QDialog):
         self.setWindowTitle("Clone Repository")
         layout = QVBoxLayout(self)
         form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(7)
         self.url = QLineEdit()
         self.url.setPlaceholderText("git@github.com:org/repo.git 或 https://...")
         self.dest = QLineEdit()
-        browse = QPushButton("📁")
-        browse.clicked.connect(self._browse)
-        row = QHBoxLayout()
-        row.addWidget(self.dest)
-        row.addWidget(browse)
+        folder_action = self.dest.addAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            QLineEdit.ActionPosition.TrailingPosition,
+        )
+        folder_action.setToolTip("从资源管理器选择文件夹；路径不存在时会自动创建")
+        folder_action.triggered.connect(self._browse)
+        field_width = 450
+        for edit in (self.url, self.dest):
+            edit.setMinimumHeight(22)
+            edit.setMaximumHeight(24)
+            edit.setFixedWidth(field_width)
+            edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         form.addRow("远程 URL", self.url)
-        form.addRow("目标目录", row)
+        form.addRow("目标目录", self.dest)
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -82,9 +97,19 @@ class CloneDialog(QDialog):
         layout.addWidget(buttons)
 
     def _browse(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "选择 clone 到的父目录")
+        current = self.dest.text().strip()
+        base = Path(current).expanduser() if current else Path.cwd()
+        if not base.exists():
+            base = base.parent if base.suffix else base
+        directory = QFileDialog.getExistingDirectory(self, "选择 clone 到的父目录", str(base if base.exists() else Path.cwd()))
         if directory:
-            self.dest.setText(directory)
+            path = Path(directory).expanduser()
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                QMessageBox.warning(self, "目录创建失败", f"无法创建目录：{path}\n{exc}")
+                return
+            self.dest.setText(str(path))
 
 
 class RemoteDialog(QDialog):
@@ -93,8 +118,17 @@ class RemoteDialog(QDialog):
         self.setWindowTitle(title)
         layout = QVBoxLayout(self)
         form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(7)
         self.name = QLineEdit()
         self.url = QLineEdit()
+        for edit in (self.name, self.url):
+            edit.setMinimumHeight(22)
+            edit.setMaximumHeight(24)
+            edit.setFixedWidth(420)
+            edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         form.addRow("remote 名称", self.name)
         form.addRow("URL", self.url)
         layout.addLayout(form)
@@ -113,6 +147,7 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1040, 620)
         self.runner = GitRunner()
+        self.git_version_text = ""
         self.config_path = self._default_config_path()
         base_config = self._load_config()
         self.language_mode = str(base_config.get("language_mode", "default"))
@@ -453,21 +488,6 @@ class MainWindow(QMainWindow):
         workspace_layout = QVBoxLayout(self.workspace_content)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(0)
-        self.status_bar_label = QLabel("Repo: - | Branch: - | HEAD: - | Remote: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: -")
-        self.status_bar_label.setObjectName("TopStatusLabel")
-        self.status_bar_label.setMinimumWidth(0)
-        self.status_bar_label.setMinimumHeight(26)
-        self.status_bar_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.status_bar_label.setWordWrap(False)
-        workspace_layout.addWidget(self.status_bar_label)
-        self.repo_target_label = QLabel("提交目标: - | Push URL: - | Local: -")
-        self.repo_target_label.setObjectName("RepoTargetLabel")
-        self.repo_target_label.setMinimumWidth(0)
-        self.repo_target_label.setMinimumHeight(26)
-        self.repo_target_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.repo_target_label.setWordWrap(False)
-        self.repo_target_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        workspace_layout.addWidget(self.repo_target_label)
         self.tabs = QTabWidget()
         self.tabs.setObjectName("editorTabs")
         self.tabs.setDocumentMode(True)
@@ -567,6 +587,8 @@ class MainWindow(QMainWindow):
 
         content_layout.addWidget(self.horizontal_splitter)
         root_layout.addWidget(content, 1)
+        self._build_bottom_status_strip()
+        root_layout.addWidget(self.bottom_status_strip)
         self.setCentralWidget(root)
 
         self.top_bar.left_sidebar_button.clicked.connect(self.toggle_left_sidebar)
@@ -602,6 +624,62 @@ class MainWindow(QMainWindow):
         self._build_platform_tab()
         self._strip_workspace_buttons()
         self._compact_ui_controls()
+
+    def _build_bottom_status_strip(self) -> None:
+        """Build a VS Code-style one-line status strip at the bottom of the window."""
+        self.bottom_status_strip = QFrame()
+        self.bottom_status_strip.setObjectName("statusStrip")
+        self.bottom_status_strip.setFixedHeight(25)
+        layout = QHBoxLayout(self.bottom_status_strip)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.status_segments: dict[str, QLabel] = {}
+
+        def add_segment(key: str, text: str, max_width: int | None = None, stretch: int = 0) -> QLabel:
+            label = QLabel(text)
+            label.setObjectName("statusPathSegment" if key in {"push", "local"} else "statusSegment")
+            label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            label.setFixedHeight(25)
+            label.setMinimumWidth(0)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored if stretch else QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+            if max_width is not None:
+                label.setMaximumWidth(max_width)
+            self.status_segments[key] = label
+            layout.addWidget(label, stretch)
+            return label
+
+        add_segment("repo", "仓库: 未打开")
+        add_segment("branch", "分支: -")
+        add_segment("head", "HEAD: -")
+        add_segment("upstream", "Upstream: -", max_width=230)
+        add_segment("sync", "↑0 ↓0")
+        add_segment("dirty", "变更: 0")
+        add_segment("breakdown", "暂存 0 | 修改 0 | 未跟踪 0 | 冲突 0", max_width=260)
+        add_segment("mode", "Mode: -")
+        add_segment("remotes", "远程: -", max_width=220)
+        add_segment("push", "Push: -", max_width=320)
+        add_segment("local", "Local: -", max_width=360, stretch=1)
+        add_segment("git", "Git: -")
+
+    def _set_status_segment(self, key: str, text: str, tooltip: str | None = None) -> None:
+        label = getattr(self, "status_segments", {}).get(key)
+        if label is None:
+            return
+        label.setText(text)
+        label.setToolTip(tooltip if tooltip is not None else text)
+
+    def _short_middle(self, value: str, limit: int = 56) -> str:
+        value = value or "-"
+        if len(value) <= limit:
+            return value
+        left = max(12, limit // 2 - 3)
+        right = max(12, limit - left - 1)
+        return value[:left] + "…" + value[-right:]
+
+    def _sanitize_url_for_status(self, url: str) -> str:
+        # Avoid leaking HTTPS credentials in the always-visible status strip.
+        return re.sub(r"(https?://)([^/@:\\s]+):([^/@\\s]+)@", r"\1\2:***@", url.strip()) if url else "-"
 
     def _build_context_actions(self) -> None:
         """Build the right ACTIONS sidebar with collapsible groups."""
@@ -706,8 +784,10 @@ class MainWindow(QMainWindow):
             ("Pull", lambda: self.run_git_command(["pull", "--ff-only"], callback=lambda _: self.refresh_all(), timeout=300), False),
             ("Push", lambda: self.run_git_command(["push"], callback=lambda _: self.refresh_all(), timeout=300), False),
             ("Remote -v", lambda: self.run_git_command(["remote", "-v"], callback=self.show_result_in_log), False),
+            ("Set Track", self.set_tracking_branch_from_remote_page, False),
             ("Add Remote", self.add_remote, True),
-            ("SSH / Credential", self.show_ssh_remote_info, True),
+            ("SSH Auth", self.configure_provider_ssh_from_menu, True),
+            ("HTTPS Auth", self.configure_provider_https_from_menu, True),
         ])
         add_group("Tags / Stash", [
             ("New Tag", self.create_tag_from_menu, False),
@@ -727,8 +807,8 @@ class MainWindow(QMainWindow):
             ("Test Auth", self.test_provider_auth_from_menu, False),
             ("Install gh", self.install_gh_cli, False),
             ("Install glab", self.install_glab_cli, False),
-            ("gh Page", self.show_github_cli_page, False),
-            ("glab Page", self.show_gitlab_cli_page, False),
+            ("GitHub", self.show_github_cli_page, False),
+            ("GitLab", self.show_gitlab_cli_page, False),
         ])
 
         custom_entries: list[tuple[str, Callable[[], None], bool]] = [
@@ -1066,6 +1146,9 @@ class MainWindow(QMainWindow):
         text = f"{key} {label}".lower()
         if not self.runner.repo_path:
             return []
+        # URL 字段必须保持自由输入；不能因为标签里有“远程”就塞入 remote 名称。
+        if "url" in text or "地址" in text:
+            return []
         try:
             if any(word in text for word in ["branch", "分支", "target", "onto"]):
                 result = self.runner.run(["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"])
@@ -1082,6 +1165,49 @@ class MainWindow(QMainWindow):
         except Exception:
             return []
         return []
+
+    def _compact_field_width(self, *texts: object, folder: bool = False) -> int:
+        samples = [str(text).strip() for text in texts if str(text).strip()]
+        sample = max(samples, key=len) if samples else "输入"
+        metrics = self.fontMetrics()
+        width = metrics.horizontalAdvance(sample) + (44 if folder else 24)
+        return max(132, min(width, 460))
+
+    def _set_compact_field_size(self, widget: QWidget, width: int) -> None:
+        widget.setMinimumHeight(22)
+        widget.setMaximumHeight(24)
+        widget.setFixedWidth(width)
+        widget.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        if isinstance(widget, QComboBox) and widget.lineEdit() is not None:
+            widget.lineEdit().setMinimumHeight(20)
+            widget.lineEdit().setMaximumHeight(22)
+
+    def _prompt_label_width(self, labels: list[str]) -> int:
+        metrics = self.fontMetrics()
+        if not labels:
+            return 96
+        width = max(metrics.horizontalAdvance(label) for label in labels) + 10
+        return max(92, min(width, 150))
+
+    def _make_prompt_label(self, text: str, width: int, height: int = 22) -> QLabel:
+        label = QLabel(text)
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        label.setFixedWidth(width)
+        label.setFixedHeight(height)
+        label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        return label
+
+    def _attach_folder_picker_action(self, edit, label: str = "") -> None:
+        target = edit.lineEdit() if isinstance(edit, QComboBox) and edit.lineEdit() is not None else edit
+        if not isinstance(target, QLineEdit):
+            return
+        action = target.addAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            QLineEdit.ActionPosition.TrailingPosition,
+        )
+        action.setToolTip("从资源管理器选择文件夹；路径不存在时会自动创建")
+        action.triggered.connect(lambda _=False, e=edit, l=label: self._browse_folder_into(e, l))
+
 
     def request_workspace_form(
         self,
@@ -1104,13 +1230,36 @@ class MainWindow(QMainWindow):
         self._clear_workspace_prompt_form()
         self.workspace_prompt_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.workspace_prompt_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        self.workspace_prompt_fields = {}
-        first_input = None
+        self.workspace_prompt_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        self.workspace_prompt_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+        self.workspace_prompt_form.setHorizontalSpacing(10)
+        self.workspace_prompt_form.setVerticalSpacing(7)
+        normalized_fields = []
+        translated_labels: list[str] = []
+        field_widths: list[int] = []
         for raw_field in fields:
             key, label, default, password = raw_field[:4]
             kind = raw_field[4] if len(raw_field) >= 5 else "auto"
-            suggestions = [] if password else self._field_suggestions(str(key), str(label))
-            if suggestions:
+            translated_label = self.t(self._language_key(str(label), "prompt.label"), str(label))
+            needs_folder = self._is_folder_field(str(key), str(label), kind)
+            normalized_fields.append((key, label, default, password, kind, translated_label, needs_folder))
+            translated_labels.append(translated_label)
+            field_widths.append(self._compact_field_width(str(default), str(label), str(key), folder=needs_folder))
+        label_width = self._prompt_label_width(translated_labels)
+        field_width = max(field_widths) if field_widths else 132
+        self.workspace_prompt_fields = {}
+        first_input = None
+        for key, label, default, password, kind, translated_label, needs_folder in normalized_fields:
+            is_multiline = str(kind).lower() in {"multiline", "textarea", "plain_text"} or str(key) in {"commands", "script"}
+            suggestions = [] if password or is_multiline else self._field_suggestions(str(key), str(label))
+            if is_multiline:
+                edit = QPlainTextEdit()
+                edit.setObjectName("workspacePromptTextInput")
+                edit.setPlainText(str(default))
+                edit.setFixedWidth(max(field_width, 300))
+                edit.setFixedHeight(74)
+                edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            elif suggestions:
                 edit = QComboBox()
                 edit.setObjectName("workspacePromptInput")
                 edit.setEditable(True)
@@ -1118,36 +1267,18 @@ class MainWindow(QMainWindow):
                 if default:
                     edit.setCurrentText(str(default))
                 edit.lineEdit().returnPressed.connect(self._submit_workspace_prompt)
-                edit.setMinimumHeight(34)
-                edit.setMaximumWidth(380)
-                edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+                self._set_compact_field_size(edit, field_width)
             else:
                 edit = QLineEdit()
                 edit.setObjectName("workspacePromptInput")
                 edit.setText(str(default))
                 edit.setEchoMode(QLineEdit.EchoMode.Password if password else QLineEdit.EchoMode.Normal)
                 edit.returnPressed.connect(self._submit_workspace_prompt)
-                edit.setMinimumHeight(34)
-                edit.setMinimumWidth(120)
-                edit.setMaximumWidth(380)
-                edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-            translated_label = self.t(self._language_key(str(label), "prompt.label"), str(label))
-            needs_folder = self._is_folder_field(str(key), str(label), kind)
+                self._set_compact_field_size(edit, field_width)
             if needs_folder:
-                row = QHBoxLayout()
-                row.setContentsMargins(0, 0, 0, 0)
-                row.setSpacing(4)
-                row.addWidget(edit)
-                browse = QPushButton("📁")
-                browse.setObjectName("folderBrowseButton")
-                browse.setToolTip("从资源管理器选择文件夹；路径不存在时会自动创建")
-                browse.setFixedWidth(34)
-                browse.clicked.connect(lambda _=False, e=edit, l=str(label): self._browse_folder_into(e, l))
-                row.addWidget(browse)
-                row.addStretch(1)
-                self.workspace_prompt_form.addRow(translated_label, row)
-            else:
-                self.workspace_prompt_form.addRow(translated_label, edit)
+                self._attach_folder_picker_action(edit, str(label))
+            label_height = 74 if is_multiline else 22
+            self.workspace_prompt_form.addRow(self._make_prompt_label(translated_label, label_width, label_height), edit)
             self.workspace_prompt_fields[str(key)] = edit
             if first_input is None:
                 first_input = edit
@@ -1222,7 +1353,9 @@ class MainWindow(QMainWindow):
     def _submit_workspace_prompt(self) -> None:
         values = {}
         for key, edit in getattr(self, "workspace_prompt_fields", {}).items():
-            if hasattr(edit, "currentText"):
+            if hasattr(edit, "toPlainText"):
+                values[key] = edit.toPlainText()
+            elif hasattr(edit, "currentText"):
                 values[key] = edit.currentText()
             else:
                 values[key] = edit.text()
@@ -1691,6 +1824,11 @@ class MainWindow(QMainWindow):
             ("Add", self.add_remote),
             ("Remove", self.remove_remote),
             ("Set URL", self.set_remote_url),
+            ("Set Tracking", self.set_tracking_branch_from_remote_page),
+            ("Push -u", self.push_current_branch_upstream_from_menu),
+            ("SSH Auth", self.configure_provider_ssh_from_menu),
+            ("HTTPS Auth", self.configure_provider_https_from_menu),
+            ("Test Auth", self.test_provider_auth_from_menu),
             ("Fetch", self.fetch_remote),
             ("Fetch --prune", lambda: self.run_git_command(["fetch", "--all", "--prune"], callback=lambda _: self.refresh_all(), timeout=300)),
             ("Push", lambda: self.run_git_command(["push"], callback=lambda _: self.refresh_all(), timeout=300)),
@@ -1919,7 +2057,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         note = QLabel(
-            "平台能力是增强模块：本地 Git 功能无需登录。这里按平台分区展示初始化配置、仓库、PR/MR、Issue、Release、CI 和高级配置入口；命令执行仍保持透明输出。"
+            "平台与 Git 配置集中在这里：本地 Git 功能不依赖平台登录；SSH / HTTPS / CLI / Git config 都可以独立配置和测试。"
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -1929,28 +2067,6 @@ class MainWindow(QMainWindow):
         platform_tabs.setObjectName("platformTabs")
         platform_tabs.setDocumentMode(True)
         platform_tabs.setTabsClosable(False)
-
-        user_page = QWidget()
-        user_layout = QVBoxLayout(user_page)
-        user_tip = QLabel("用户与账号配置：这里集中展示 Git identity、credential helper，以及 GitHub/GitLab/Gitee 配置入口。")
-        user_tip.setWordWrap(True)
-        user_layout.addWidget(user_tip)
-        self.git_identity_status = QLabel("Git identity: 点击右侧 Refresh Status 或仓库刷新后检测。")
-        self.git_identity_status.setObjectName("ProviderStatusLabel")
-        self.git_identity_status.setWordWrap(True)
-        user_layout.addWidget(self.git_identity_status)
-        identity_box = QGroupBox("Git Identity")
-        identity_form = QFormLayout(identity_box)
-        self.git_user_name_input = QLineEdit()
-        self.git_user_email_input = QLineEdit()
-        identity_form.addRow("user.name", self.git_user_name_input)
-        identity_form.addRow("user.email", self.git_user_email_input)
-        user_layout.addWidget(identity_box)
-        helper = QLabel("配置按钮位于右侧 ACTIONS：设置 user.name / user.email、Refresh Status、Credential Helper、各平台登录检查。")
-        helper.setWordWrap(True)
-        user_layout.addWidget(helper)
-        user_layout.addStretch(1)
-        platform_tabs.addTab(user_page, "User")
 
         def add_command_grid(parent_layout: QVBoxLayout, title: str, entries: list[tuple[str, list[str] | Callable[[], None]]], columns: int = 3) -> None:
             box = QGroupBox(title)
@@ -1967,90 +2083,138 @@ class MainWindow(QMainWindow):
                 grid.addWidget(button, index // columns, index % columns)
             parent_layout.addWidget(box)
 
+        # Git config page -------------------------------------------------
+        git_config = QWidget()
+        git_config_layout = QVBoxLayout(git_config)
+        git_config_layout.setSpacing(8)
+        git_config_tip = QLabel(
+            "Git 配置页：支持 global / local / system 作用域，常用 http/https 代理、credential、pull、core、默认分支等配置；SSH 端口走 ~/.ssh/config。"
+        )
+        git_config_tip.setWordWrap(True)
+        git_config_layout.addWidget(git_config_tip)
+        self.git_config_status = QLabel("Git 配置：选择作用域和 key 后可读取、设置、删除或列出。")
+        self.git_config_status.setObjectName("ProviderStatusLabel")
+        self.git_config_status.setWordWrap(True)
+        git_config_layout.addWidget(self.git_config_status)
+
+        config_box = QGroupBox("Git config 读写")
+        config_form = QFormLayout(config_box)
+        config_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        config_form.setHorizontalSpacing(12)
+        config_form.setVerticalSpacing(7)
+        self.git_config_scope = QComboBox()
+        self.git_config_scope.addItems(["global", "local", "system"])
+        self.git_config_key = QComboBox()
+        self.git_config_key.setEditable(True)
+        self.git_config_key.addItems([
+            "user.name", "user.email", "core.editor", "core.autocrlf", "core.safecrlf",
+            "core.filemode", "core.longpaths", "init.defaultBranch", "pull.rebase", "pull.ff",
+            "fetch.prune", "push.default", "credential.helper", "http.proxy", "https.proxy",
+            "http.sslVerify", "http.postBuffer", "ssh.variant", "core.sshCommand",
+        ])
+        self.git_config_value = QLineEdit()
+        self.git_config_value.setPlaceholderText("要写入的值；读取/删除时可留空")
+        for widget in (self.git_config_scope, self.git_config_key, self.git_config_value):
+            self._set_compact_field_size(widget, 360 if widget is self.git_config_value else 220)
+        config_form.addRow("作用域", self.git_config_scope)
+        config_form.addRow("key", self.git_config_key)
+        config_form.addRow("value", self.git_config_value)
+        config_buttons = QHBoxLayout()
+        for text, handler in [
+            ("读取", self.read_git_config_key),
+            ("设置", self.set_git_config_key),
+            ("删除", self.unset_git_config_key),
+            ("列出作用域", self.list_git_config_scope),
+        ]:
+            button = QPushButton(text)
+            button.clicked.connect(handler)
+            config_buttons.addWidget(button)
+        config_buttons.addStretch(1)
+        config_form.addRow(config_buttons)
+        git_config_layout.addWidget(config_box)
+
+        ssh_box = QGroupBox("SSH Host / 端口配置")
+        ssh_layout = QVBoxLayout(ssh_box)
+        ssh_tip = QLabel("Git 本身没有单独的 SSH 端口项；SSH 地址的端口应配置在 ~/.ssh/config 的 Host 块，或写入 core.sshCommand。")
+        ssh_tip.setWordWrap(True)
+        ssh_layout.addWidget(ssh_tip)
+        ssh_buttons = QGridLayout()
+        for index, (text, handler) in enumerate([
+            ("配置 SSH Host 端口...", self.configure_ssh_host_port_from_page),
+            ("设置 core.sshCommand...", self.configure_core_ssh_command_from_page),
+            ("查看 ~/.ssh/config", self.show_ssh_config_file),
+            ("测试 ssh -T...", self.test_provider_auth_from_menu),
+            ("设置 Credential Helper", self.configure_credential_helper_from_page),
+            ("刷新状态", self.refresh_platform_statuses),
+        ]):
+            button = QPushButton(text)
+            button.clicked.connect(handler)
+            ssh_buttons.addWidget(button, index // 3, index % 3)
+        ssh_layout.addLayout(ssh_buttons)
+        git_config_layout.addWidget(ssh_box)
+        git_config_layout.addStretch(1)
+        platform_tabs.addTab(git_config, "Git 配置")
+
+        # User page -------------------------------------------------------
+        user_page = QWidget()
+        user_layout = QVBoxLayout(user_page)
+        user_tip = QLabel("用户与账号配置：这里集中展示 Git identity、credential helper，以及 GitHub/GitLab/Gitee 配置入口。")
+        user_tip.setWordWrap(True)
+        user_layout.addWidget(user_tip)
+        self.git_identity_status = QLabel("Git identity: 点击 Refresh Status 或仓库刷新后检测。")
+        self.git_identity_status.setObjectName("ProviderStatusLabel")
+        self.git_identity_status.setWordWrap(True)
+        user_layout.addWidget(self.git_identity_status)
+        identity_box = QGroupBox("Git Identity")
+        identity_form = QFormLayout(identity_box)
+        identity_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.git_user_name_input = QLineEdit()
+        self.git_user_email_input = QLineEdit()
+        for edit in (self.git_user_name_input, self.git_user_email_input):
+            self._set_compact_field_size(edit, 280)
+        identity_form.addRow("user.name", self.git_user_name_input)
+        identity_form.addRow("user.email", self.git_user_email_input)
+        identity_buttons = QHBoxLayout()
+        for text, handler in [
+            ("保存为 global", self.save_git_identity_from_page),
+            ("刷新", self.refresh_platform_statuses),
+            ("打开 Git 配置页", self.show_git_config_page),
+        ]:
+            button = QPushButton(text)
+            button.clicked.connect(handler)
+            identity_buttons.addWidget(button)
+        identity_buttons.addStretch(1)
+        identity_form.addRow(identity_buttons)
+        user_layout.addWidget(identity_box)
+        user_layout.addStretch(1)
+        platform_tabs.addTab(user_page, "User")
+
+        # GitHub page; CLI functions merged here -------------------------
         github = QWidget()
         github_layout = QVBoxLayout(github)
         github_layout.setSpacing(8)
-        github_tip = QLabel("GitHub 建议使用 gh CLI。初始化配置会调用 gh auth login / gh auth setup-git；仓库和协作功能通过 gh 命令执行。")
+        github_tip = QLabel("GitHub：认证配置和 gh CLI 常用功能合并在同一页；没有 gh 也可以先配置 SSH / HTTPS remote。")
         github_tip.setWordWrap(True)
         github_layout.addWidget(github_tip)
         self.github_status_label = QLabel("GitHub: 正在检测 gh 登录状态...")
         self.github_status_label.setObjectName("ProviderStatusLabel")
         self.github_status_label.setWordWrap(True)
         github_layout.addWidget(self.github_status_label)
-        add_command_grid(github_layout, "GitHub 初始化 / 账号", [
+        add_command_grid(github_layout, "GitHub 初始化 / 账号 / 认证", [
             ("一键安装 gh", self.install_gh_cli),
-            ("GitHub CLI 页", self.show_github_cli_page),
             ("检查 gh", ["gh", "--version"]),
-            ("gh auth status", ["gh", "auth", "status"]),
-            ("gh auth login", ["gh", "auth", "login"]),
-            ("gh auth setup-git", ["gh", "auth", "setup-git"]),
-            ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
-            ("HTTPS 配置", self.configure_provider_https_from_menu),
-            ("认证测试", self.test_provider_auth_from_menu),
-        ])
-        add_command_grid(github_layout, "GitHub 仓库 / 协作", [
-            ("创建仓库...", self.create_remote_repository),
-            ("repo list", ["gh", "repo", "list", "--limit", "50"]),
-            ("repo view", ["gh", "repo", "view"]),
-            ("PR list", ["gh", "pr", "list"]),
-            ("PR status", ["gh", "pr", "status"]),
-            ("Issue list", ["gh", "issue", "list"]),
-            ("Release list", ["gh", "release", "list"]),
-            ("Actions runs", ["gh", "run", "list"]),
-        ])
-        github_layout.addStretch(1)
-        platform_tabs.addTab(github, "GitHub")
-
-        gitlab = QWidget()
-        gitlab_layout = QVBoxLayout(gitlab)
-        gitlab_tip = QLabel("GitLab 建议使用 glab CLI。支持认证、项目列表、MR、Issue、Pipeline、Release 等常用入口。")
-        gitlab_tip.setWordWrap(True)
-        gitlab_layout.addWidget(gitlab_tip)
-        self.gitlab_status_label = QLabel("GitLab: 正在检测 glab 登录状态...")
-        self.gitlab_status_label.setObjectName("ProviderStatusLabel")
-        self.gitlab_status_label.setWordWrap(True)
-        gitlab_layout.addWidget(self.gitlab_status_label)
-        add_command_grid(gitlab_layout, "GitLab 初始化 / 账号", [
-            ("一键安装 glab", self.install_glab_cli),
-            ("GitLab CLI 页", self.show_gitlab_cli_page),
-            ("检查 glab", ["glab", "--version"]),
-            ("glab auth status", ["glab", "auth", "status"]),
-            ("glab auth login", ["glab", "auth", "login"]),
-            ("glab config list", ["glab", "config", "list"]),
-            ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
-            ("HTTPS 配置", self.configure_provider_https_from_menu),
-            ("认证测试", self.test_provider_auth_from_menu),
-        ])
-        add_command_grid(gitlab_layout, "GitLab 项目 / 协作", [
-            ("repo list", ["glab", "repo", "list"]),
-            ("repo view", ["glab", "repo", "view"]),
-            ("MR list", ["glab", "mr", "list"]),
-            ("MR status", ["glab", "mr", "status"]),
-            ("Issue list", ["glab", "issue", "list"]),
-            ("Pipeline list", ["glab", "pipeline", "list"]),
-            ("Release list", ["glab", "release", "list"]),
-        ])
-        gitlab_layout.addStretch(1)
-        platform_tabs.addTab(gitlab, "GitLab")
-
-        github_cli = QWidget()
-        github_cli_layout = QVBoxLayout(github_cli)
-        github_cli_tip = QLabel("GitHub CLI 新页面：安装 gh 后会自动跳转到这里。常用 repo / PR / Issue / Release / Actions 操作提供交互式入口。")
-        github_cli_tip.setWordWrap(True)
-        github_cli_layout.addWidget(github_cli_tip)
-        add_command_grid(github_cli_layout, "安装 / 认证 / 配置", [
-            ("一键安装 gh", self.install_gh_cli),
             ("gh auth login", ["gh", "auth", "login"]),
             ("gh auth status", ["gh", "auth", "status"]),
             ("gh auth setup-git", ["gh", "auth", "setup-git"]),
             ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
             ("HTTPS 配置", self.configure_provider_https_from_menu),
+            ("认证测试", self.test_provider_auth_from_menu),
         ])
-        add_command_grid(github_cli_layout, "Repo / PR / Issue 交互式", [
+        add_command_grid(github_layout, "Repo / PR / Issue / Release / Actions", [
             ("repo clone...", self.gh_repo_clone_interactive),
             ("repo create...", self.gh_repo_create_interactive),
-            ("repo view", ["gh", "repo", "view"]),
             ("repo list", ["gh", "repo", "list", "--limit", "50"]),
+            ("repo view", ["gh", "repo", "view"]),
             ("PR create...", self.gh_pr_create_interactive),
             ("PR checkout...", self.gh_pr_checkout_interactive),
             ("PR list", ["gh", "pr", "list"]),
@@ -2060,27 +2224,35 @@ class MainWindow(QMainWindow):
             ("Release list", ["gh", "release", "list"]),
             ("Actions runs", ["gh", "run", "list"]),
         ])
-        github_cli_layout.addStretch(1)
-        platform_tabs.addTab(github_cli, "GitHub CLI")
+        github_layout.addStretch(1)
+        platform_tabs.addTab(github, "GitHub")
 
-        gitlab_cli = QWidget()
-        gitlab_cli_layout = QVBoxLayout(gitlab_cli)
-        gitlab_cli_tip = QLabel("GitLab CLI 新页面：安装 glab 后会自动跳转到这里。常用 repo / MR / Issue / Pipeline / Release 操作提供交互式入口。")
-        gitlab_cli_tip.setWordWrap(True)
-        gitlab_cli_layout.addWidget(gitlab_cli_tip)
-        add_command_grid(gitlab_cli_layout, "安装 / 认证 / 配置", [
+        # GitLab page; CLI functions merged here -------------------------
+        gitlab = QWidget()
+        gitlab_layout = QVBoxLayout(gitlab)
+        gitlab_layout.setSpacing(8)
+        gitlab_tip = QLabel("GitLab：认证配置和 glab CLI 常用功能合并在同一页；没有 glab 也可以先配置 SSH / HTTPS remote。")
+        gitlab_tip.setWordWrap(True)
+        gitlab_layout.addWidget(gitlab_tip)
+        self.gitlab_status_label = QLabel("GitLab: 正在检测 glab 登录状态...")
+        self.gitlab_status_label.setObjectName("ProviderStatusLabel")
+        self.gitlab_status_label.setWordWrap(True)
+        gitlab_layout.addWidget(self.gitlab_status_label)
+        add_command_grid(gitlab_layout, "GitLab 初始化 / 账号 / 认证", [
             ("一键安装 glab", self.install_glab_cli),
+            ("检查 glab", ["glab", "--version"]),
             ("glab auth login", ["glab", "auth", "login"]),
             ("glab auth status", ["glab", "auth", "status"]),
             ("glab config list", ["glab", "config", "list"]),
             ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
             ("HTTPS 配置", self.configure_provider_https_from_menu),
+            ("认证测试", self.test_provider_auth_from_menu),
         ])
-        add_command_grid(gitlab_cli_layout, "Repo / MR / Issue 交互式", [
+        add_command_grid(gitlab_layout, "Repo / MR / Issue / Pipeline / Release", [
             ("repo clone...", self.glab_repo_clone_interactive),
             ("repo create...", self.glab_repo_create_interactive),
-            ("repo view", ["glab", "repo", "view"]),
             ("repo list", ["glab", "repo", "list"]),
+            ("repo view", ["glab", "repo", "view"]),
             ("MR create...", self.glab_mr_create_interactive),
             ("MR checkout...", self.glab_mr_checkout_interactive),
             ("MR list", ["glab", "mr", "list"]),
@@ -2090,49 +2262,56 @@ class MainWindow(QMainWindow):
             ("Pipeline list", ["glab", "pipeline", "list"]),
             ("Release list", ["glab", "release", "list"]),
         ])
-        gitlab_cli_layout.addStretch(1)
-        platform_tabs.addTab(gitlab_cli, "GitLab CLI")
+        gitlab_layout.addStretch(1)
+        platform_tabs.addTab(gitlab, "GitLab")
 
+        # Gitee page ------------------------------------------------------
         gitee = QWidget()
         gitee_layout = QVBoxLayout(gitee)
-        gitee_tip = QLabel("Gitee 支持 Token / 用户名配置。生产环境应接入系统 Keychain，本版本仅作为当前会话输入和命令透明测试入口。")
+        gitee_layout.setSpacing(8)
+        gitee_tip = QLabel("Gitee：可配置 Token，也可直接配置 SSH / HTTPS remote；不要求先登录 GitHub/GitLab。")
         gitee_tip.setWordWrap(True)
         gitee_layout.addWidget(gitee_tip)
-        self.gitee_status_label = QLabel("Gitee: 未配置 Token。请填写 Token 和用户/组织后点击右侧 Refresh Status 或 Gitee repos。")
+        self.gitee_status_label = QLabel("Gitee: 未配置 Token。请填写 Token 和用户/组织后点击检查。")
         self.gitee_status_label.setObjectName("ProviderStatusLabel")
         self.gitee_status_label.setWordWrap(True)
         gitee_layout.addWidget(self.gitee_status_label)
         gitee_box = QGroupBox("Gitee 初始化配置")
         gitee_form = QFormLayout(gitee_box)
+        gitee_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.gitee_token = QLineEdit()
         self.gitee_token.setEchoMode(QLineEdit.EchoMode.Password)
         self.gitee_token.setPlaceholderText("Personal Access Token")
         self.gitee_user = QLineEdit()
         self.gitee_user.setPlaceholderText("用户名 / 组织名")
+        for edit in (self.gitee_token, self.gitee_user):
+            self._set_compact_field_size(edit, 300)
         gitee_form.addRow("Gitee Token", self.gitee_token)
         gitee_form.addRow("用户/组织", self.gitee_user)
-        gitee_buttons = QGridLayout()
-        for index, (text, handler) in enumerate([
+        gitee_buttons = QHBoxLayout()
+        for text, handler in [
             ("检查 token / repos", self.gitee_list_repos),
-            ("打开 Gitee 设置", lambda: self.run_external_command(["cmd", "/c", "start", "https://gitee.com/profile/personal_access_tokens"]) if os.name == "nt" else self.run_external_command(["xdg-open", "https://gitee.com/profile/personal_access_tokens"])),
-        ]):
-            button = QPushButton(text)
-            button.clicked.connect(handler)
-            gitee_buttons.addWidget(button, index // 2, index % 2)
-        gitee_form.addRow(gitee_buttons)
-        gitee_layout.addWidget(gitee_box)
-        add_command_grid(gitee_layout, "Gitee / 自定义 Git 远程", [
             ("SSH 多用户配置", self.configure_provider_ssh_from_menu),
             ("HTTPS 配置", self.configure_provider_https_from_menu),
             ("认证测试", self.test_provider_auth_from_menu),
+        ]:
+            button = QPushButton(text)
+            button.clicked.connect(handler)
+            gitee_buttons.addWidget(button)
+        gitee_buttons.addStretch(1)
+        gitee_form.addRow(gitee_buttons)
+        gitee_layout.addWidget(gitee_box)
+        add_command_grid(gitee_layout, "Gitee / 自定义 Git 远程", [
             ("remote -v", lambda: self.run_git_command(["remote", "-v"], callback=self.show_result_in_log)),
             ("添加 Remote...", self.add_remote),
             ("设置 Remote URL...", self.set_remote_url),
+            ("设置跟踪分支...", self.set_tracking_branch_from_remote_page),
             ("测试 ls-remote", lambda: self.run_git_command(["ls-remote"], callback=self.show_result_in_log, timeout=300)),
         ])
         gitee_layout.addStretch(1)
         platform_tabs.addTab(gitee, "Gitee")
 
+        # Advanced page ---------------------------------------------------
         advanced = QWidget()
         advanced_layout = QVBoxLayout(advanced)
         advanced_tip = QLabel("高级平台配置：SSH、credential helper、remote 权限、保护分支和 CI 状态通常由平台 API 或 CLI 执行。")
@@ -2147,7 +2326,7 @@ class MainWindow(QMainWindow):
             ("ls-remote origin", lambda: self.run_git_command(["ls-remote", "origin"], callback=self.show_result_in_log, timeout=300)),
         ])
         advanced_layout.addStretch(1)
-        platform_tabs.addTab(advanced, "高级配置")
+        platform_tabs.addTab(advanced, "高级")
 
         layout.addWidget(platform_tabs, 2)
         self.platform_output = QPlainTextEdit()
@@ -2155,6 +2334,188 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.platform_output, 1)
         self._add_scrollable_tab(page, "平台")
         self.refresh_platform_statuses()
+
+    # ------------------------------------------------------------------
+    # Git config page helpers
+    # ------------------------------------------------------------------
+    def _git_config_scope_arg(self) -> str:
+        widget = getattr(self, "git_config_scope", None)
+        scope = widget.currentText().strip() if widget is not None else "global"
+        return "--" + (scope if scope in {"global", "local", "system"} else "global")
+
+    def _git_config_key_text(self) -> str:
+        widget = getattr(self, "git_config_key", None)
+        return widget.currentText().strip() if widget is not None else ""
+
+    def _git_config_value_text(self) -> str:
+        widget = getattr(self, "git_config_value", None)
+        return widget.text().strip() if widget is not None else ""
+
+    def _git_config_cwd_ok(self) -> bool:
+        scope = self._git_config_scope_arg()
+        if scope == "--local" and not self.runner.repo_path:
+            self.append_log("Git config local 操作已取消：需要先打开一个本地仓库。")
+            return False
+        return True
+
+    def read_git_config_key(self) -> None:
+        if not self._git_config_cwd_ok():
+            return
+        key = self._git_config_key_text()
+        if not key:
+            self.append_log("读取 Git config 已取消：key 为空。")
+            return
+        self.run_git_command(["config", self._git_config_scope_arg(), "--get", key], callback=self._show_git_config_result)
+
+    def set_git_config_key(self) -> None:
+        if not self._git_config_cwd_ok():
+            return
+        key = self._git_config_key_text()
+        value = self._git_config_value_text()
+        if not key:
+            self.append_log("设置 Git config 已取消：key 为空。")
+            return
+        self.run_git_command(["config", self._git_config_scope_arg(), key, value], callback=self._show_git_config_result)
+
+    def unset_git_config_key(self) -> None:
+        if not self._git_config_cwd_ok():
+            return
+        key = self._git_config_key_text()
+        if not key:
+            self.append_log("删除 Git config 已取消：key 为空。")
+            return
+        self.run_git_command(["config", self._git_config_scope_arg(), "--unset-all", key], callback=self._show_git_config_result)
+
+    def list_git_config_scope(self) -> None:
+        if not self._git_config_cwd_ok():
+            return
+        self.run_git_command(["config", self._git_config_scope_arg(), "--list", "--show-origin"], callback=self._show_git_config_result)
+
+    def _show_git_config_result(self, result: GitResult) -> None:
+        text = result.output.strip() or "(no output)"
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(text)
+        if hasattr(self, "git_config_status"):
+            self.git_config_status.setText(("✓ " if result.ok else "⚠ ") + "Git config 命令已执行，详情见输出区。")
+        self.append_log(("✓" if result.ok else "⚠") + " Git config 命令完成。")
+        self.refresh_platform_statuses()
+
+    def configure_credential_helper_from_page(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            helper = values.get("helper", "manager-core").strip()
+            scope = values.get("scope", "global").strip().lower() or "global"
+            if scope not in {"global", "local", "system"}:
+                scope = "global"
+            if scope == "local" and not self.runner.repo_path:
+                self.append_log("Credential Helper 设置已取消：local 作用域需要先打开仓库。")
+                return
+            if not helper:
+                self.append_log("Credential Helper 设置已取消：helper 为空。")
+                return
+            self.run_git_command(["config", f"--{scope}", "credential.helper", helper], callback=self._show_git_config_result)
+        self.request_workspace_form(
+            "设置 Credential Helper",
+            "设置 Git credential.helper。Windows 通常使用 manager-core；也可输入 store/cache/osxkeychain/libsecret。",
+            [("scope", "作用域 global/local/system", "global", False), ("helper", "credential.helper", "manager-core", False)],
+            submitted,
+        )
+
+    def configure_core_ssh_command_from_page(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            scope = values.get("scope", "global").strip().lower() or "global"
+            command = values.get("command", "").strip()
+            if scope not in {"global", "local", "system"}:
+                scope = "global"
+            if scope == "local" and not self.runner.repo_path:
+                self.append_log("core.sshCommand 设置已取消：local 作用域需要先打开仓库。")
+                return
+            if not command:
+                self.append_log("core.sshCommand 设置已取消：命令为空。")
+                return
+            self.run_git_command(["config", f"--{scope}", "core.sshCommand", command], callback=self._show_git_config_result)
+        self.request_workspace_form(
+            "设置 core.sshCommand",
+            "用于覆盖 Git 调用 ssh 的方式；例如：ssh -p 2222 -i ~/.ssh/id_ed25519。更推荐稳定地写入 ~/.ssh/config。",
+            [("scope", "作用域 global/local/system", "local", False), ("command", "core.sshCommand", "ssh -p 22", False)],
+            submitted,
+        )
+
+    def configure_ssh_host_port_from_page(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            host = values.get("host", "github.com-work").strip()
+            hostname = values.get("hostname", "github.com").strip()
+            user = values.get("user", "git").strip() or "git"
+            port = values.get("port", "22").strip() or "22"
+            identity = values.get("identity", "").strip()
+            if not host or not hostname:
+                self.append_log("SSH Host 端口配置已取消：Host 或 HostName 为空。")
+                return
+            ssh_dir = Path.home() / ".ssh"
+            ssh_dir.mkdir(parents=True, exist_ok=True)
+            config_path = ssh_dir / "config"
+            lines = [
+                f"Host {host}",
+                f"  HostName {hostname}",
+                f"  User {user}",
+                f"  Port {port}",
+                "  IdentitiesOnly yes",
+            ]
+            if identity:
+                lines.append(f"  IdentityFile {Path(identity).expanduser()}")
+            block = "\n".join(lines) + "\n"
+            existing = config_path.read_text(encoding="utf-8", errors="replace") if config_path.exists() else ""
+            if f"Host {host}" in existing:
+                self.append_log(f"SSH Host 已存在，未覆盖：{host}。请在 ~/.ssh/config 中手动调整，或换一个 Host alias。")
+                if hasattr(self, "platform_output"):
+                    self.platform_output.setPlainText(existing)
+                return
+            with config_path.open("a", encoding="utf-8") as fh:
+                if existing and not existing.endswith("\n"):
+                    fh.write("\n")
+                fh.write(block)
+            self.append_log(f"✓ 已写入 SSH Host：{host} -> {hostname}:{port}")
+            if hasattr(self, "platform_output"):
+                self.platform_output.setPlainText(f"已追加到 {config_path}:\n\n{block}")
+        self.request_workspace_form(
+            "配置 SSH Host / 端口",
+            "写入 ~/.ssh/config。remote 可使用 git@HostAlias:owner/repo.git，从而绑定 HostName、Port、IdentityFile。",
+            [
+                ("host", "Host alias", "github.com-work", False),
+                ("hostname", "HostName", "github.com", False),
+                ("port", "Port", "22", False),
+                ("user", "User", "git", False),
+                ("identity", "IdentityFile", str(Path.home() / ".ssh" / "id_ed25519"), False),
+            ],
+            submitted,
+        )
+
+    def show_ssh_config_file(self) -> None:
+        config_path = Path.home() / ".ssh" / "config"
+        if config_path.exists():
+            text = config_path.read_text(encoding="utf-8", errors="replace")
+        else:
+            text = f"{config_path} 不存在。"
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(text)
+        self.append_log(f"已读取 SSH config：{config_path}")
+
+    def save_git_identity_from_page(self) -> None:
+        name = self.git_user_name_input.text().strip() if hasattr(self, "git_user_name_input") else ""
+        email = self.git_user_email_input.text().strip() if hasattr(self, "git_user_email_input") else ""
+        if not name or not email:
+            self.append_log("保存 Git identity 已取消：user.name 或 user.email 为空。")
+            return
+        command = "\n".join([
+            f"git config --global user.name {self._shell_quote(name)}",
+            f"git config --global user.email {self._shell_quote(email)}",
+            "git config --global --get-regexp '^user\\.(name|email)$'",
+        ])
+        self.run_shell_command(command, callback=self._show_git_config_result)
+
+    def show_git_config_page(self) -> None:
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentIndex(8)
+        self._set_platform_tab_by_text("Git 配置")
 
     def refresh_platform_statuses(self) -> None:
         def set_label(name: str, text: str, ok: bool | None = None) -> None:
@@ -2165,9 +2526,10 @@ class MainWindow(QMainWindow):
 
         if shutil.which("gh"):
             try:
-                result = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8)
+                result = subprocess.run(["gh", "auth", "status"], capture_output=True, text=False, timeout=8, env=utf8_subprocess_env())
+                stdout, stderr = completed_process_text(result)
                 if result.returncode == 0:
-                    detail = (result.stdout or result.stderr).strip().splitlines()[0:3]
+                    detail = (stdout or stderr).strip().splitlines()[0:3]
                     set_label("github_status_label", "GitHub 已登录：" + " | ".join(detail), True)
                 else:
                     set_label("github_status_label", "GitHub 未登录。点击右侧 gh auth 或在终端执行：gh auth login，然后执行 gh auth setup-git。", False)
@@ -2178,9 +2540,10 @@ class MainWindow(QMainWindow):
 
         if shutil.which("glab"):
             try:
-                result = subprocess.run(["glab", "auth", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8)
+                result = subprocess.run(["glab", "auth", "status"], capture_output=True, text=False, timeout=8, env=utf8_subprocess_env())
+                stdout, stderr = completed_process_text(result)
                 if result.returncode == 0:
-                    detail = (result.stdout or result.stderr).strip().splitlines()[0:3]
+                    detail = (stdout or stderr).strip().splitlines()[0:3]
                     set_label("gitlab_status_label", "GitLab 已登录：" + " | ".join(detail), True)
                 else:
                     set_label("gitlab_status_label", "GitLab 未登录。点击右侧 glab auth 或在终端执行：glab auth login。", False)
@@ -2201,6 +2564,10 @@ class MainWindow(QMainWindow):
             set_label("git_identity_status", f"Git identity 已配置：{name} <{email}>", True)
         else:
             set_label("git_identity_status", "Git identity 未完整配置。请设置 user.name 和 user.email。", False)
+
+        helper_result = self.runner.run(["config", "--global", "credential.helper"], cwd=None)
+        helper = helper_result.stdout.strip() if helper_result.ok else ""
+        set_label("git_config_status", f"global credential.helper={helper or '(未设置)'}；Git config 页面可设置 http.proxy / https.proxy / core.sshCommand / pull 等。", True if helper else None)
 
         token = getattr(self, "gitee_token", None).text().strip() if hasattr(self, "gitee_token") else ""
         user = getattr(self, "gitee_user", None).text().strip() if hasattr(self, "gitee_user") else ""
@@ -2355,19 +2722,33 @@ class MainWindow(QMainWindow):
             button.setMinimumHeight(24)
             if button.text() and not button.toolTip():
                 button.setToolTip(button.text())
+        for form in self.findChildren(QFormLayout):
+            form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+            form.setHorizontalSpacing(10)
+            form.setVerticalSpacing(7)
         for line_edit in self.findChildren(QLineEdit):
             name = line_edit.objectName()
-            line_edit.setMinimumWidth(88)
+            line_edit.setMinimumHeight(22)
+            line_edit.setMaximumHeight(24)
             if name in {"commandCenter", "rawCommandInput", "terminalInput"}:
+                line_edit.setMinimumWidth(160)
                 line_edit.setMaximumWidth(520)
+                line_edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             elif name == "workspacePromptInput":
-                line_edit.setMaximumWidth(380)
+                if line_edit.maximumWidth() > 360:
+                    line_edit.setMaximumWidth(360)
+                line_edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             else:
-                line_edit.setMaximumWidth(280)
-            line_edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+                line_edit.setMinimumWidth(96)
+                line_edit.setMaximumWidth(260)
+                line_edit.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         for combo in self.findChildren(QComboBox):
+            combo.setMinimumHeight(22)
+            combo.setMaximumHeight(24)
             combo.setMinimumWidth(96)
-            combo.setMaximumWidth(360)
+            combo.setMaximumWidth(320)
             combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         for tree in self.findChildren(QTreeWidget):
             tree.setMinimumWidth(0)
@@ -2420,8 +2801,10 @@ class MainWindow(QMainWindow):
         git = self.runner.detect_git()
         self.append_log("Environment check")
         if git.ok:
+            self.git_version_text = git.output.strip().splitlines()[0] if git.output.strip() else ""
             self.append_log(f"✓ {git.output}")
         else:
+            self.git_version_text = ""
             self.append_log("✗ Git not found. 请先安装 Git 后重新检测。")
         for args in (["config", "--global", "user.name"], ["config", "--global", "user.email"], ["config", "--global", "init.defaultBranch"], ["config", "--global", "credential.helper"]):
             result = self.runner.run(args, cwd=None)
@@ -2569,8 +2952,16 @@ class MainWindow(QMainWindow):
     def run_external_command(self, cmd: List[str]) -> None:
         self.append_log("Will run external:\n" + " ".join(shlex.quote(x) for x in cmd))
         try:
-            proc = subprocess.run(cmd, cwd=self.runner.cwd(), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-            out = (proc.stdout or "") + (proc.stderr or "")
+            proc = subprocess.run(
+                cmd,
+                cwd=self.runner.cwd(),
+                capture_output=True,
+                text=False,
+                timeout=120,
+                env=utf8_subprocess_env(),
+            )
+            stdout, stderr = completed_process_text(proc)
+            out = stdout + stderr
             self.platform_output.setPlainText(out.strip() or "(no output)")
             self.append_log(("✓" if proc.returncode == 0 else "✗") + " " + " ".join(cmd) + "\n" + (out.strip() or "(no output)"))
         except Exception as exc:
@@ -2770,22 +3161,50 @@ class MainWindow(QMainWindow):
             self.center_splitter.setSizes(center_sizes)
 
     def update_top_status(self) -> None:
+        """Update the bottom status strip. Name kept for existing call sites."""
         summary = self.runner.summarize()
-        remote = ",".join(summary.remotes) if summary.remotes else "-"
-        status_text = (
-            f"仓库: {summary.name} | 分支: {summary.branch} | HEAD: {summary.head} | "
-            f"远程: {remote} | Upstream: {summary.upstream} | Ahead: {summary.ahead} | "
-            f"Behind: {summary.behind} | Dirty: {summary.dirty} | Mode: {summary.mode}"
+        remotes = ", ".join(summary.remotes) if summary.remotes else "-"
+        items = self.runner.parse_status() if self.runner.repo_path else []
+        staged_count = sum(1 for item in items if item.staged)
+        changed_count = sum(1 for item in items if item.changed)
+        untracked_count = sum(1 for item in items if item.untracked)
+        conflict_count = sum(1 for item in items if self._is_conflict_status(item.index_status, item.worktree_status))
+        push_target, push_url, local_path = self._repo_target_details(summary)
+        push_url_safe = self._sanitize_url_for_status(push_url)
+        repo_tooltip = str(summary.path) if summary.path else "未打开仓库"
+        branch_tooltip = f"当前分支: {summary.branch}\nHEAD: {summary.head}\nUpstream: {summary.upstream}"
+        sync_tooltip = f"Ahead: {summary.ahead}\nBehind: {summary.behind}\nUpstream: {summary.upstream}"
+        dirty_tooltip = (
+            f"Dirty: {summary.dirty}\nStaged: {staged_count}\nChanged: {changed_count}\n"
+            f"Untracked: {untracked_count}\nConflicts: {conflict_count}"
         )
-        target_text = self._build_repo_target_text(summary)
-        self.status_bar_label.setText(status_text)
-        self.status_bar_label.setToolTip(status_text)
-        self.repo_target_label.setText(target_text)
-        self.repo_target_label.setToolTip(target_text)
+        target_tooltip = (
+            f"提交/推送目标: {push_target}\nPush URL: {push_url_safe}\n"
+            f"当前提交: {summary.head}\nLocal: {local_path}"
+        )
+        self._set_status_segment("repo", f"仓库: {self._short_middle(summary.name, 32)}", repo_tooltip)
+        self._set_status_segment("branch", f"分支: {self._short_middle(summary.branch, 28)}", branch_tooltip)
+        self._set_status_segment("head", f"HEAD: {summary.head or '-'}", branch_tooltip)
+        self._set_status_segment("upstream", f"Upstream: {self._short_middle(summary.upstream, 34)}", sync_tooltip)
+        self._set_status_segment("sync", f"↑{summary.ahead} ↓{summary.behind}", sync_tooltip)
+        self._set_status_segment("dirty", f"变更: {summary.dirty}", dirty_tooltip)
+        self._set_status_segment("breakdown", f"暂存 {staged_count} | 修改 {changed_count} | 未跟踪 {untracked_count} | 冲突 {conflict_count}", dirty_tooltip)
+        self._set_status_segment("mode", f"Mode: {summary.mode}", f"Repository state: {summary.mode}")
+        self._set_status_segment("remotes", f"远程: {self._short_middle(remotes, 34)}", f"Remotes: {remotes}")
+        self._set_status_segment("push", f"Push: {self._short_middle(push_target, 34)}", target_tooltip)
+        self._set_status_segment("local", f"Local: {self._short_middle(local_path, 58)}", target_tooltip)
+        git_text = self.git_version_text.replace("git version ", "") if self.git_version_text else "-"
+        self._set_status_segment("git", f"Git: {git_text}", self.git_version_text or "Git 未检测")
 
-    def _build_repo_target_text(self, summary) -> str:
+    def _is_conflict_status(self, index_status: str, worktree_status: str) -> bool:
+        return (
+            "U" in (index_status, worktree_status)
+            or (index_status, worktree_status) in {("A", "A"), ("D", "D"), ("A", "U"), ("U", "A"), ("D", "U"), ("U", "D")}
+        )
+
+    def _repo_target_details(self, summary) -> tuple[str, str, str]:
         if not self.runner.repo_path:
-            return "提交目标: 未打开仓库 | Push URL: - | Local: -"
+            return "未打开仓库", "-", "-"
         upstream = summary.upstream or ""
         push_target = "未设置 upstream"
         push_url = "-"
@@ -2800,7 +3219,11 @@ class MainWindow(QMainWindow):
             url_result = self.runner.run(["remote", "get-url", "--push", remote_name])
             if url_result.ok and url_result.stdout.strip():
                 push_url = url_result.stdout.strip().splitlines()[0]
-        local = str(self.runner.repo_path)
+        return push_target, push_url, str(self.runner.repo_path)
+
+    def _build_repo_target_text(self, summary) -> str:
+        push_target, push_url, local = self._repo_target_details(summary)
+        push_url = self._sanitize_url_for_status(push_url)
         return f"提交目标: {push_target} | Push URL: {push_url} | 当前提交: {summary.head} | Local: {local}"
 
     # ------------------------------------------------------------------
@@ -3398,6 +3821,33 @@ class MainWindow(QMainWindow):
         remote = self._selected_remote() or "--all"
         self.run_git_command(["fetch", remote], callback=lambda _: self.refresh_all(), timeout=300)
 
+    def set_tracking_branch_from_remote_page(self) -> None:
+        current = self.runner.run(["branch", "--show-current"]).stdout.strip() if self.runner.repo_path else ""
+        selected_remote = self._selected_remote() or "origin"
+        def submitted(values: dict[str, str]) -> None:
+            local_branch = values.get("local", current).strip() or current
+            remote = values.get("remote", selected_remote).strip() or selected_remote
+            upstream = values.get("upstream", local_branch).strip() or local_branch
+            mode = values.get("mode", "set-upstream").strip().lower() or "set-upstream"
+            if not local_branch or not remote or not upstream:
+                self.append_log("设置跟踪分支已取消：local / remote / upstream 不能为空。")
+                return
+            if mode in {"push-u", "push", "push -u"}:
+                self.run_git_command(["push", "-u", remote, local_branch], callback=lambda _: self.refresh_all(), timeout=300)
+            else:
+                self.run_git_command(["branch", "--set-upstream-to", f"{remote}/{upstream}", local_branch], callback=lambda _: self.refresh_all())
+        self.request_workspace_form(
+            "设置跟踪分支",
+            "为本地分支设置 upstream。默认执行 git branch --set-upstream-to remote/upstream local；mode 输入 push-u 时改为 git push -u remote local。",
+            [
+                ("local", "本地分支", current, False),
+                ("remote", "remote", selected_remote, False),
+                ("upstream", "远程分支", current, False),
+                ("mode", "模式 set-upstream/push-u", "set-upstream", False),
+            ],
+            submitted,
+        )
+
     def delete_remote_branch(self) -> None:
         def submitted(values: dict[str, str]) -> None:
             remote = values.get("remote", "origin").strip() or "origin"
@@ -3625,7 +4075,7 @@ class MainWindow(QMainWindow):
         self.request_workspace_form(
             "新增 Custom 按钮",
             "自定义按钮会存放在右侧 ACTIONS 最后的 Custom 分组。commands 可输入一行或多行 shell/git 指令。",
-            [("name", "按钮名称", "", False), ("commands", "一行或多行指令", "git status -sb", False)],
+            [("name", "按钮名称", "", False), ("commands", "一行或多行指令", "git status -sb", False, "multiline")],
             submitted,
         )
 
@@ -3743,8 +4193,27 @@ class MainWindow(QMainWindow):
         return """from __future__ import annotations
 import json
 import os
+import locale
 import subprocess
 from pathlib import Path
+
+def decode_output(data):
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    encodings = ["utf-8", "utf-8-sig", locale.getpreferredencoding(False), "gb18030", "gbk", "cp936"]
+    used = set()
+    for enc in encodings:
+        if not enc or enc.lower() in used:
+            continue
+        used.add(enc.lower())
+        try:
+            return data.decode(enc)
+        except Exception:
+            pass
+    return data.decode("utf-8", errors="replace")
+
 cfg = json.loads(PAYLOAD_PLACEHOLDER)
 ssh_dir = Path.home() / ".ssh"
 ssh_dir.mkdir(parents=True, exist_ok=True)
@@ -3777,9 +4246,9 @@ pub = Path(str(key_path) + ".pub")
 if pub.exists():
     print(pub.read_text(encoding="utf-8", errors="replace").strip())
 print("Testing SSH alias:", cfg["alias"])
-proc = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-T", cfg["alias"]], text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=30)
-print(proc.stdout.strip())
-print(proc.stderr.strip())
+proc = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-T", cfg["alias"]], text=False, capture_output=True, timeout=30)
+print(decode_output(proc.stdout).strip())
+print(decode_output(proc.stderr).strip())
 print("SSH_TEST_RETURN_CODE=", proc.returncode)
 """.replace("PAYLOAD_PLACEHOLDER", payload_text)
 
@@ -3865,54 +4334,163 @@ print("SSH_TEST_RETURN_CODE=", proc.returncode)
             self.platform_output.setPlainText(result.output)
         self.append_log(("✓" if result.ok else "⚠") + f" 认证测试完成：SSH={ssh_target}, remote={remote_name}。")
 
-    def _cli_install_script(self, tool: str) -> str:
+    def _powershell_encoded_command(self, script: str) -> str:
+        encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+        return f"powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}"
+
+    def _windows_portable_cli_install_script(self, tool: str) -> str:
+        exe = "gh.exe" if tool == "gh" else "glab.exe"
+        api_url = "https://api.github.com/repos/cli/cli/releases/latest" if tool == "gh" else "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest"
+        asset_selector = r"windows_amd64\.zip$" if tool == "gh" else r"windows_amd64\.zip$|windows_x86_64\.zip$"
+        source_name = "GitHub official release zip" if tool == "gh" else "GitLab official release zip"
+        return f"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
+$Tool = '{tool}'
+$Exe = '{exe}'
+$ApiUrl = '{api_url}'
+$AssetSelector = '{asset_selector}'
+$SourceName = '{source_name}'
+
+function Write-Step([string]$Text) {{ Write-Host "[git-terminal] $Text" }}
+function Add-UserPath([string]$Dir) {{
+    $current = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ([string]::IsNullOrWhiteSpace($current)) {{
+        [Environment]::SetEnvironmentVariable('Path', $Dir, 'User')
+    }} elseif ((";$current;" -notlike "*;$Dir;*")) {{
+        [Environment]::SetEnvironmentVariable('Path', "$current;$Dir", 'User')
+    }}
+    if ((";$env:Path;" -notlike "*;$Dir;*")) {{ $env:Path = "$Dir;$env:Path" }}
+}}
+function First-NonEmptyUrl($Item) {{
+    if ($Item.browser_download_url) {{ return [string]$Item.browser_download_url }}
+    if ($Item.direct_asset_url) {{ return [string]$Item.direct_asset_url }}
+    if ($Item.url) {{ return [string]$Item.url }}
+    return ''
+}}
+function Find-AssetUrl($Release) {{
+    $items = @()
+    if ($Release.assets) {{
+        if ($Release.assets.links) {{ $items += $Release.assets.links }}
+        if ($Release.assets -is [System.Array]) {{ $items += $Release.assets }}
+    }}
+    foreach ($item in $items) {{
+        $name = [string]$item.name
+        $url = First-NonEmptyUrl $item
+        if (($name -match $AssetSelector) -or ($url -match $AssetSelector)) {{ return $url }}
+    }}
+    throw "未在最新 release 中找到 $Tool 的 Windows amd64/x86_64 zip 资产。"
+}}
+
+$existing = Get-Command $Tool -ErrorAction SilentlyContinue
+if ($existing) {{
+    Write-Step "已检测到 $Tool：$($existing.Source)；只做版本检查。"
+    & $Tool --version
+    exit $LASTEXITCODE
+}}
+
+$binDir = Join-Path $env:LOCALAPPDATA 'GitTerminal\bin'
+New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+$target = Join-Path $binDir $Exe
+
+if (Test-Path $target) {{
+    Write-Step "已检测到便携安装文件：$target；只做版本检查。"
+    Add-UserPath $binDir
+    & $target --version
+    exit $LASTEXITCODE
+}}
+
+Write-Step "未检测到 $Tool，且没有可用包管理器；改用 $SourceName 安装到当前用户目录。"
+$headers = @{{ 'User-Agent' = 'git-terminal' }}
+$release = Invoke-RestMethod -Uri $ApiUrl -Headers $headers
+$url = Find-AssetUrl $release
+$name = Split-Path ([System.Uri]$url).AbsolutePath -Leaf
+$archive = Join-Path $env:TEMP $name
+$extract = Join-Path $env:TEMP ("git-terminal-$Tool-" + [Guid]::NewGuid().ToString('N'))
+
+Write-Step "下载：$url"
+Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing -Headers $headers
+New-Item -ItemType Directory -Force -Path $extract | Out-Null
+Expand-Archive -Path $archive -DestinationPath $extract -Force
+$found = Get-ChildItem -Path $extract -Filter $Exe -Recurse -File | Select-Object -First 1
+if (-not $found) {{ throw "压缩包中未找到 $Exe。" }}
+Copy-Item -Path $found.FullName -Destination $target -Force
+Add-UserPath $binDir
+Write-Step "已安装到：$target"
+Write-Step "已把 $binDir 写入当前用户 PATH；新开的终端会自动继承。"
+& $target --version
+exit $LASTEXITCODE
+"""
+
+    def _cli_install_command(self, tool: str) -> tuple[Optional[str], str]:
+        tool = "gh" if tool == "gh" else "glab"
+        if shutil.which(tool):
+            return f"{self._shell_quote(tool)} --version", f"已检测到 {tool}，只执行版本检查，不重复安装。"
+
         if os.name == "nt":
-            winget_id = "GitHub.cli" if tool == "gh" else "GitLab.cli"
-            return (
-                f"where {tool} && {tool} --version || "
-                f"(winget install --id {winget_id} -e --accept-package-agreements --accept-source-agreements || "
-                f"choco install {tool} -y || scoop install {tool}) && {tool} --version"
-            )
+            candidates: list[tuple[str, str]] = []
+            winget_id = "GitHub.cli" if tool == "gh" else "GLab.GLab"
+            if shutil.which("winget"):
+                candidates.append(("winget", f"winget install --id {winget_id} -e --accept-package-agreements --accept-source-agreements"))
+            if shutil.which("choco"):
+                candidates.append(("choco", f"choco install {tool} -y"))
+            if shutil.which("scoop"):
+                candidates.append(("scoop", f"scoop install {tool}"))
+            if candidates:
+                manager, install = candidates[0]
+                return f"{install} && {tool} --version", f"未检测到 {tool}；检测到 {manager}，将只使用该安装器安装。"
+            script = self._windows_portable_cli_install_script(tool)
+            return self._powershell_encoded_command(script), f"未检测到 {tool}，且没有 winget / choco / scoop；将从官方 release 下载 Windows zip 并安装到当前用户目录。"
+
         if sys.platform == "darwin":
-            return f"command -v {tool} >/dev/null 2>&1 || brew install {tool}; {tool} --version"
-        package = "gh" if tool == "gh" else "glab"
-        return f'''set -e
-if command -v {tool} >/dev/null 2>&1; then
-  {tool} --version
-elif command -v brew >/dev/null 2>&1; then
-  brew install {package}
-elif command -v apt-get >/dev/null 2>&1; then
-  sudo apt-get update && sudo apt-get install -y {package}
-elif command -v dnf >/dev/null 2>&1; then
-  sudo dnf install -y {package}
-elif command -v yum >/dev/null 2>&1; then
-  sudo yum install -y {package}
-elif command -v pacman >/dev/null 2>&1; then
-  sudo pacman -Sy --noconfirm {package}
-elif command -v snap >/dev/null 2>&1; then
-  sudo snap install {package}
-else
-  echo "No supported package manager found. Install {tool} manually, then rerun status."
-  exit 1
-fi
-{tool} --version
-'''
+            if not shutil.which("brew"):
+                return None, f"未检测到 {tool}，且当前 macOS 环境没有 Homebrew。已停止。"
+            return f"brew install {tool} && {tool} --version", f"未检测到 {tool}；检测到 Homebrew，将使用 brew 安装。"
+
+        linux_candidates = [
+            ("brew", f"brew install {tool}"),
+            ("apt-get", f"sudo apt-get update && sudo apt-get install -y {tool}"),
+            ("dnf", f"sudo dnf install -y {tool}"),
+            ("yum", f"sudo yum install -y {tool}"),
+            ("pacman", f"sudo pacman -Sy --noconfirm {tool}"),
+            ("snap", f"sudo snap install {tool}"),
+        ]
+        for manager, install in linux_candidates:
+            if shutil.which(manager):
+                return f"set -e\n{install}\n{tool} --version", f"未检测到 {tool}；检测到 {manager}，将只使用该安装器安装。"
+        return None, f"未检测到 {tool}，且当前系统没有可用安装器：brew / apt-get / dnf / yum / pacman / snap。已停止。"
+
+    def _install_cli_tool(self, tool: str) -> None:
+        command, message = self._cli_install_command(tool)
+        self.append_log(message)
+        if hasattr(self, "platform_output"):
+            self.platform_output.setPlainText(message)
+        if not command:
+            self.set_terminal_state("warning", "SKIP")
+            return
+        self.run_shell_command(command, callback=lambda r: self._after_cli_install(r, tool), timeout=1200)
 
     def install_gh_cli(self) -> None:
-        self.run_shell_command(self._cli_install_script("gh"), callback=lambda r: self._after_cli_install(r, "gh"), timeout=1200)
+        self._install_cli_tool("gh")
 
     def install_glab_cli(self) -> None:
-        self.run_shell_command(self._cli_install_script("glab"), callback=lambda r: self._after_cli_install(r, "glab"), timeout=1200)
+        self._install_cli_tool("glab")
 
     def _after_cli_install(self, result: GitResult, tool: str) -> None:
         if hasattr(self, "platform_output"):
             self.platform_output.setPlainText(result.output)
-        self.append_log(("✓" if result.ok else "⚠") + f" {tool} 安装流程结束。")
         self.refresh_platform_statuses()
-        if tool == "gh":
-            self.show_github_cli_page()
+        if result.ok:
+            self.append_log(f"✓ {tool} 已可用。")
+            if tool == "gh":
+                self.show_github_cli_page()
+            else:
+                self.show_gitlab_cli_page()
         else:
-            self.show_gitlab_cli_page()
+            self.append_log(f"✗ {tool} 安装失败或版本检查失败；未跳转 CLI 页面。请查看平台输出。")
 
     def _set_platform_tab_by_text(self, tab_text: str) -> None:
         if not hasattr(self, "platform_tabs"):
@@ -3925,12 +4503,12 @@ fi
     def show_github_cli_page(self) -> None:
         if hasattr(self, "tabs"):
             self.tabs.setCurrentIndex(8)
-        self._set_platform_tab_by_text("GitHub CLI")
+        self._set_platform_tab_by_text("GitHub")
 
     def show_gitlab_cli_page(self) -> None:
         if hasattr(self, "tabs"):
             self.tabs.setCurrentIndex(8)
-        self._set_platform_tab_by_text("GitLab CLI")
+        self._set_platform_tab_by_text("GitLab")
 
     def gh_repo_clone_interactive(self) -> None:
         self._cli_clone_interactive("gh")

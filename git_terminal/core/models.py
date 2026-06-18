@@ -5,6 +5,8 @@ from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 
+from git_terminal.core.encoding import decode_command_output
+
 
 class RiskLevel(str, Enum):
     LOW = "low"
@@ -24,12 +26,8 @@ class GitResult:
         # Windows subprocess reader threads can fail to decode output if Python
         # falls back to a legacy locale. Always normalize to strings so UI code
         # never crashes on `None.splitlines()`.
-        if isinstance(self.stdout, bytes):
-            self.stdout = self.stdout.decode("utf-8", errors="replace")
-        if isinstance(self.stderr, bytes):
-            self.stderr = self.stderr.decode("utf-8", errors="replace")
-        self.stdout = self.stdout or ""
-        self.stderr = self.stderr or ""
+        self.stdout = decode_command_output(self.stdout)
+        self.stderr = decode_command_output(self.stderr)
 
     @property
     def ok(self) -> bool:

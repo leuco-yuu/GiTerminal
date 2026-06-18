@@ -244,3 +244,27 @@ git_terminal_project/
 - 有向图右键菜单新增“Create tag here”，会拒绝创建已有标签。
 - 右侧 ACTIONS 分组可折叠，末尾新增 Custom 分组；用户可以新增/删除自定义按钮。
 - 暴露 `MainWindow.register_custom_button(name, commands, persist=True)` 接口，`commands` 支持一行或多行 shell/git 指令。
+
+## v0.8.2 Windows CLI install fallback
+
+- Windows 上安装 `gh` / `glab` 时，优先使用已存在的 `winget` / `choco` / `scoop`。
+- 如果没有任何包管理器，自动从官方 latest release 下载 Windows zip，解压到 `%LOCALAPPDATA%\\GitTerminal\\bin`，并写入当前用户 PATH。
+- 安装后必须执行 `gh --version` / `glab --version` 成功才会进入对应 CLI 页面；失败时保留错误输出，不再提示“流程结束”。
+
+## v0.8.3 Remote / Config UI polish
+
+- 修正工作区覆盖表单的标签列和输入列：同一表单内所有输入框左边界、右边界统一对齐，标签右对齐并与控件垂直居中。
+- Clone / Remote 等弹窗中的 URL、父目录字段统一宽度；文件夹选择按钮继续嵌入在输入框尾部，不再额外占列。
+- URL 字段不再因为标签包含“远程”而错误显示 remote 名称下拉建议。
+- 新增“平台 -> Git 配置”页面：支持读取、设置、删除、列出 `git config` 的 global/local/system 配置，覆盖 `http.proxy`、`https.proxy`、`credential.helper`、`core.sshCommand`、`pull.*`、`core.*` 等常用项。
+- 新增 SSH Host / 端口配置入口：写入 `~/.ssh/config` 的 Host、HostName、Port、User、IdentityFile；同时保留 `core.sshCommand` 配置入口。
+- 合并 GitHub 与 GitHub CLI、GitLab 与 GitLab CLI 标签页，避免重复页面；安装成功后跳转到合并后的 GitHub / GitLab 页。
+- 远程页新增 Set Tracking、Push -u、SSH Auth、HTTPS Auth、Test Auth 入口，不要求先登录 GitHub/GitLab 才能配置 Git remote 认证。
+- Custom 按钮的 commands 输入改为多行输入框，真正支持一行或多行 shell/git 指令。
+- 替换应用图标为简洁单色风格 SVG。
+
+## v0.8.4 Bottom status strip
+
+- 新增 VS Code 风格底部状态行，原本显示在工作区顶部的仓库、分支、HEAD、远程、Upstream、Ahead/Behind、Dirty、Mode 等信息已全部移到底部。
+- 底部状态行增加更细的状态拆分：暂存数量、工作区修改数量、未跟踪数量、冲突数量、Push 目标、Local 路径、Git 版本。
+- Push URL、Local 路径、仓库路径等长文本会在状态行中缩短显示，完整信息保留在 tooltip 中；HTTPS URL 中的明文凭据会在状态行中脱敏。

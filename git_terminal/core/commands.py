@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from git_terminal.core.encoding import completed_process_text, utf8_subprocess_env
 from dataclasses import dataclass, field
 from typing import Dict, List
 
@@ -138,13 +139,14 @@ def flat_fallback_specs() -> List[GitCommandSpec]:
 
 def load_git_help_commands() -> List[str]:
     try:
-        proc = subprocess.run(["git", "help", "-a"], text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=10)
+        proc = subprocess.run(["git", "help", "-a"], text=False, capture_output=True, timeout=10, env=utf8_subprocess_env())
     except Exception:
         return []
     if proc.returncode != 0:
         return []
     names = set()
-    for line in proc.stdout.splitlines():
+    stdout, _ = completed_process_text(proc)
+    for line in stdout.splitlines():
         # Lines in `git help -a` often contain command names in columns.
         for token in re.split(r"\s+", line.strip()):
             if re.match(r"^[a-z][a-z0-9-]+$", token):

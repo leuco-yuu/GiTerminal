@@ -88,7 +88,7 @@ QComboBox {{
     color: {p['text']};
     border: 1px solid {p['border']};
     border-radius: 4px;
-    padding: 4px 8px;
+    padding: 2px 6px;
 }}
 QComboBox QAbstractItemView {{
     background-color: {p['panel']};
@@ -101,7 +101,7 @@ QLineEdit {{
     color: {p['text']};
     border: 1px solid {p['border']};
     border-radius: 4px;
-    padding: 5px 8px;
+    padding: 2px 6px;
     selection-background-color: {accent};
 }}
 QTextEdit {{
@@ -305,12 +305,21 @@ QLineEdit#workspacePromptInput, QComboBox#workspacePromptInput {{
     background-color: {p['input']};
     color: {p['text']};
     border: 1px solid {p['border']};
-    border-radius: 5px;
-    padding: 8px 10px;
-    min-height: 34px;
+    border-radius: 4px;
+    padding: 1px 6px;
+    min-height: 20px;
+    max-height: 24px;
     selection-background-color: {accent};
 }}
-QLineEdit#workspacePromptInput:focus, QComboBox#workspacePromptInput:focus {{
+QPlainTextEdit#workspacePromptTextInput {{
+    background-color: {p['input']};
+    color: {p['text']};
+    border: 1px solid {p['border']};
+    border-radius: 4px;
+    padding: 4px 6px;
+    selection-background-color: {accent};
+}}
+QLineEdit#workspacePromptInput:focus, QComboBox#workspacePromptInput:focus, QPlainTextEdit#workspacePromptTextInput:focus {{
     border: 1px solid {accent};
 }}
 QComboBox#workspacePromptInput QAbstractItemView {{
@@ -353,6 +362,24 @@ QLabel#RepoTargetLabel {{
     padding: 4px 10px;
     font-size: 12px;
     font-weight: 600;
+}}
+
+QFrame#statusStrip {{
+    background-color: {accent};
+    border-top: 1px solid {p['border']};
+}}
+QLabel#statusSegment, QLabel#statusPathSegment {{
+    background-color: transparent;
+    color: #ffffff;
+    border-right: 1px solid rgba(255, 255, 255, 45);
+    padding: 0 8px;
+    font-size: 12px;
+}}
+QLabel#statusSegment:hover, QLabel#statusPathSegment:hover {{
+    background-color: rgba(255, 255, 255, 28);
+}}
+QLabel#statusPathSegment {{
+    font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace;
 }}
 QLabel#ProviderStatusLabel {{
     background-color: rgba(127, 127, 127, 28);
@@ -531,7 +558,7 @@ QLineEdit#terminalInput {{
     color: {p['text']};
     border: 1px solid {p['border']};
     border-radius: 4px;
-    padding: 6px 8px;
+    padding: 2px 6px;
     font-family: Consolas;
     font-size: 12px;
     selection-background-color: {accent};

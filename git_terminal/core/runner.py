@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 from git_terminal.core.models import GitResult, GitStatusItem, RepositorySummary
+from git_terminal.core.encoding import completed_process_text, timeout_output_text, utf8_subprocess_env
 
 
 class GitRunner:
@@ -36,27 +37,21 @@ class GitRunner:
             cmd = arg_list
         else:
             cmd = [self.git_executable] + arg_list
-        env = os.environ.copy()
+        env = utf8_subprocess_env()
         env.setdefault("GIT_PAGER", "cat")
         env.setdefault("PAGER", "cat")
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["LC_ALL"] = env.get("LC_ALL", "C.UTF-8")
-        env["LANG"] = env.get("LANG", "C.UTF-8")
-        env["LESSCHARSET"] = "utf-8"
         # Prevent invisible terminal credential prompts from freezing the UI.
-        env.setdefault("GIT_TERMINAL_PROMPT", "0")
         try:
             proc = subprocess.run(
                 cmd,
                 cwd=self.cwd(cwd),
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+                text=False,
                 capture_output=True,
                 timeout=timeout,
                 env=env,
             )
-            return GitResult(cmd, self.cwd(cwd), proc.returncode, proc.stdout, proc.stderr)
+            stdout, stderr = completed_process_text(proc)
+            return GitResult(cmd, self.cwd(cwd), proc.returncode, stdout, stderr)
         except FileNotFoundError as exc:
             return GitResult(cmd, self.cwd(cwd), 127, "", str(exc))
         except NotADirectoryError as exc:

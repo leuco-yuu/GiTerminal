@@ -9,6 +9,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from git_terminal.core.models import GitResult
 from git_terminal.core.runner import GitRunner
+from git_terminal.core.encoding import completed_process_text, utf8_subprocess_env
 
 
 class GitCommandWorker(QObject):
@@ -43,12 +44,7 @@ class ShellCommandWorker(QObject):
     @pyqtSlot()
     def run(self) -> None:
         try:
-            env = os.environ.copy()
-            env["PYTHONIOENCODING"] = "utf-8"
-            env["LC_ALL"] = env.get("LC_ALL", "C.UTF-8")
-            env["LANG"] = env.get("LANG", "C.UTF-8")
-            env["LESSCHARSET"] = "utf-8"
-            env.setdefault("GIT_TERMINAL_PROMPT", "0")
+            env = utf8_subprocess_env()
             if sys.platform.startswith("win"):
                 cmd = ["cmd.exe", "/d", "/s", "/c", f"chcp 65001>nul & {self.command}"]
             else:
@@ -57,13 +53,12 @@ class ShellCommandWorker(QObject):
                 cmd,
                 cwd=self.cwd or None,
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+                text=False,
                 timeout=self.timeout,
                 env=env,
             )
-            result = GitResult([self.command], self.cwd, proc.returncode, proc.stdout, proc.stderr)
+            stdout, stderr = completed_process_text(proc)
+            result = GitResult([self.command], self.cwd, proc.returncode, stdout, stderr)
         except Exception as exc:
             result = GitResult([self.command], self.cwd, 1, "", str(exc))
         self.finished.emit(result, self.callback)
