@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, QThread, QPoint
-from PyQt6.QtGui import QAction, QKeySequence, QTextCursor
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QKeySequence, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -47,6 +47,8 @@ from git_terminal.core.models import GitResult, GitStatusItem, RiskLevel
 from git_terminal.core.runner import GitRunner
 from git_terminal.core.safety import classify_git_command
 from git_terminal.ui.workers import GitCommandWorker
+from git_terminal.ui.theme import apply_theme
+from git_terminal.ui.commit_graph import CommitGraphView, GraphCommit
 
 
 class CloneDialog(QDialog):
@@ -98,16 +100,30 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Git Terminal")
+        icon_path = Path(__file__).resolve().parents[1] / "assets" / "git_terminal_icon.svg"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1500, 930)
         self.runner = GitRunner()
         self.command_catalog = build_command_catalog()
         self._threads: List[Tuple[QThread, GitCommandWorker]] = []
         self._option_checks: List[QCheckBox] = []
         self._suppress_preview = False
+        self.theme_mode = "dark"
+        self.theme_accent = "blue"
+        self._left_collapsed = False
+        self._right_collapsed = False
+        self._bottom_collapsed = False
+        self._last_left_width = 240
+        self._last_right_width = 300
+        self._last_bottom_height = 220
 
         self._build_actions()
         self._build_ui()
         self._wire_shortcuts()
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, self, self.theme_mode, self.theme_accent)
         self.detect_environment()
         self.refresh_all()
 
@@ -137,6 +153,35 @@ class MainWindow(QMainWindow):
         tools.addAction(self.copy_command_action)
         tools.addAction("打开原生终端命令示例", self.show_terminal_help)
 
+        appearance_menu = self.menuBar().addMenu("外观")
+        mode_group = QActionGroup(self)
+        mode_group.setExclusive(True)
+        self.dark_theme_action = QAction("深色模式", self)
+        self.dark_theme_action.setCheckable(True)
+        self.light_theme_action = QAction("浅色模式", self)
+        self.light_theme_action.setCheckable(True)
+        self.dark_theme_action.setChecked(True)
+        mode_group.addAction(self.dark_theme_action)
+        mode_group.addAction(self.light_theme_action)
+        self.dark_theme_action.triggered.connect(lambda: self.change_theme_mode("dark"))
+        self.light_theme_action.triggered.connect(lambda: self.change_theme_mode("light"))
+        appearance_menu.addAction(self.dark_theme_action)
+        appearance_menu.addAction(self.light_theme_action)
+
+        accent_menu = appearance_menu.addMenu("配色")
+        accent_group = QActionGroup(self)
+        accent_group.setExclusive(True)
+        self.accent_actions = {}
+        for accent_key, label in [("blue", "蓝色"), ("purple", "紫色"), ("green", "绿色"), ("orange", "橙色")]:
+            action = QAction(label, self)
+            action.setCheckable(True)
+            if accent_key == "blue":
+                action.setChecked(True)
+            action.triggered.connect(lambda _=False, key=accent_key: self.change_theme_accent(key))
+            accent_group.addAction(action)
+            accent_menu.addAction(action)
+            self.accent_actions[accent_key] = action
+
         help_menu = self.menuBar().addMenu("帮助")
         help_menu.addAction("快捷键", self.show_shortcuts)
         help_menu.addAction("关于 Git Terminal", self.show_about)
@@ -151,30 +196,78 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         root = QVBoxLayout(central)
-        root.setContentsMargins(6, 6, 6, 6)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
 
         self.status_bar_label = QLabel("Repo: - | Branch: - | HEAD: - | Remote: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: -")
+        self.status_bar_label.setObjectName("TopStatusLabel")
         self.status_bar_label.setFrameShape(QFrame.Shape.StyledPanel)
-        self.status_bar_label.setMinimumHeight(34)
+        self.status_bar_label.setMinimumHeight(38)
         root.addWidget(self.status_bar_label)
 
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        root.addWidget(main_splitter, 1)
+        # Main layout: left sidebar | center vertical splitter | right sidebar.
+        # The bottom command/log bar lives inside the center splitter, so sidebars
+        # extend all the way to the bottom and the log bar aligns with the center.
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter.setChildrenCollapsible(True)
+        self.main_splitter.setHandleWidth(7)
+        root.addWidget(self.main_splitter, 1)
 
+        self.left_pane = QWidget()
+        self.left_pane.setObjectName("LeftPane")
+        self.left_pane.setMinimumWidth(36)
+        self.left_pane.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        left_layout = QVBoxLayout(self.left_pane)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
+        self.left_toggle_button = QPushButton("◀")
+        self.left_toggle_button.setObjectName("CollapseButton")
+        self.left_toggle_button.setToolTip("收起左侧栏")
+        self.left_toggle_button.clicked.connect(self.toggle_left_sidebar)
+        left_layout.addWidget(self._make_pane_header("导航", self.left_toggle_button))
         self.navigator = QTreeWidget()
         self.navigator.setHeaderLabel("Git Terminal")
-        self.navigator.setMaximumWidth(260)
+        self.navigator.setMinimumWidth(0)
+        self.navigator.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._populate_navigator()
         self.navigator.itemClicked.connect(self._navigator_clicked)
-        main_splitter.addWidget(self.navigator)
+        left_layout.addWidget(self.navigator, 1)
+        self.main_splitter.addWidget(self.left_pane)
 
+        self.center_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.center_splitter.setChildrenCollapsible(True)
+        self.center_splitter.setHandleWidth(7)
+        self.center_splitter.setMinimumWidth(120)
+        self.center_splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.tabs = QTabWidget()
-        main_splitter.addWidget(self.tabs)
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.tabBar().setExpanding(False)
+        self.tabs.setMinimumWidth(120)
+        self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.center_splitter.addWidget(self.tabs)
+        self._build_log_bar()
+        self.center_splitter.addWidget(self.log_bar)
+        self.center_splitter.setStretchFactor(0, 8)
+        self.center_splitter.setStretchFactor(1, 2)
+        self.center_splitter.setSizes([690, 220])
+        self.main_splitter.addWidget(self.center_splitter)
 
+        self.right_pane = QWidget()
+        self.right_pane.setObjectName("RightPane")
+        self.right_pane.setMinimumWidth(36)
+        self.right_pane.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        right_layout = QVBoxLayout(self.right_pane)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(6)
+        self.right_toggle_button = QPushButton("▶")
+        self.right_toggle_button.setObjectName("CollapseButton")
+        self.right_toggle_button.setToolTip("收起右侧栏")
+        self.right_toggle_button.clicked.connect(self.toggle_right_sidebar)
+        right_layout.addWidget(self._make_pane_header("上下文操作", self.right_toggle_button, button_first=False))
         self.context_panel = QWidget()
-        self.context_panel.setMaximumWidth(320)
+        self.context_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         context_layout = QVBoxLayout(self.context_panel)
-        context_layout.addWidget(QLabel("上下文操作"))
+        context_layout.setContentsMargins(0, 0, 0, 0)
         self.context_buttons = []
         for text, handler in [
             ("git status -sb", lambda: self.run_git_command(["status", "-sb"], callback=lambda _: self.refresh_all())),
@@ -191,8 +284,12 @@ class MainWindow(QMainWindow):
             context_layout.addWidget(btn)
             self.context_buttons.append(btn)
         context_layout.addStretch(1)
-        main_splitter.addWidget(self.context_panel)
-        main_splitter.setSizes([220, 950, 280])
+        right_layout.addWidget(self.context_panel, 1)
+        self.main_splitter.addWidget(self.right_pane)
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 6)
+        self.main_splitter.setStretchFactor(2, 1)
+        self.main_splitter.setSizes([260, 940, 300])
 
         self._build_workspace_tab()
         self._build_history_tab()
@@ -203,9 +300,25 @@ class MainWindow(QMainWindow):
         self._build_advanced_tab()
         self._build_all_commands_tab()
         self._build_platform_tab()
-        self._build_log_bar(root)
+        self._compact_ui_controls()
 
         self.setCentralWidget(central)
+
+    def _make_pane_header(self, title: str, button: QPushButton, button_first: bool = True) -> QFrame:
+        header = QFrame()
+        header.setObjectName("PaneHeader")
+        header.setMinimumHeight(38)
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(8, 4, 8, 4)
+        label = QLabel(title)
+        label.setObjectName("PaneTitle")
+        if button_first:
+            layout.addWidget(button)
+            layout.addWidget(label, 1)
+        else:
+            layout.addWidget(label, 1)
+            layout.addWidget(button)
+        return header
 
     def _populate_navigator(self) -> None:
         groups = {
@@ -310,10 +423,17 @@ class MainWindow(QMainWindow):
     def _build_branch_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        self.branch_view_tabs = QTabWidget()
+        self.branch_view_tabs.setUsesScrollButtons(True)
+        self.branch_view_tabs.tabBar().setExpanding(False)
+        layout.addWidget(self.branch_view_tabs, 1)
+
+        list_page = QWidget()
+        list_layout = QVBoxLayout(list_page)
         self.branch_list = QListWidget()
         self.branch_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.branch_list.customContextMenuRequested.connect(self._branch_context_menu)
-        layout.addWidget(self.branch_list, 1)
+        list_layout.addWidget(self.branch_list, 1)
         row = QHBoxLayout()
         self.new_branch_name = QLineEdit()
         self.new_branch_name.setPlaceholderText("新分支名")
@@ -322,15 +442,46 @@ class MainWindow(QMainWindow):
             ("Create", self.create_branch),
             ("Switch", self.switch_branch),
             ("Delete", self.delete_branch),
-            ("Merge Into Current", self.merge_branch),
-            ("Rebase Onto", self.rebase_onto_branch),
+            ("Merge", self.merge_branch),
+            ("Rebase", self.rebase_onto_branch),
             ("Push -u", self.push_branch_upstream),
             ("Pull", lambda: self.run_git_command(["pull"], callback=lambda _: self.refresh_all(), timeout=300)),
         ]:
             b = QPushButton(text)
             b.clicked.connect(handler)
             row.addWidget(b)
-        layout.addLayout(row)
+        list_layout.addLayout(row)
+        self.branch_view_tabs.addTab(list_page, "列表")
+
+        graph_page = QWidget()
+        graph_layout = QVBoxLayout(graph_page)
+        graph_toolbar = QHBoxLayout()
+        refresh_graph_btn = QPushButton("刷新图")
+        refresh_graph_btn.clicked.connect(self.refresh_branch_graph)
+        fit_graph_btn = QPushButton("适应视图")
+        fit_graph_btn.clicked.connect(self.fit_branch_graph)
+        graph_help = QLabel("提示：悬浮节点看信息，单击看详情，双击 checkout，右键更多操作；Ctrl+滚轮缩放。")
+        graph_help.setWordWrap(True)
+        graph_toolbar.addWidget(refresh_graph_btn)
+        graph_toolbar.addWidget(fit_graph_btn)
+        graph_toolbar.addWidget(graph_help, 1)
+        graph_layout.addLayout(graph_toolbar)
+        graph_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.branch_graph_view = CommitGraphView()
+        self.branch_graph_view.commitSelected.connect(self.graph_commit_selected)
+        self.branch_graph_view.commitActivated.connect(self.graph_checkout_commit)
+        self.branch_graph_view.commitContextRequested.connect(self.graph_commit_context_menu)
+        graph_splitter.addWidget(self.branch_graph_view)
+        self.branch_graph_detail = QPlainTextEdit()
+        self.branch_graph_detail.setReadOnly(True)
+        self.branch_graph_detail.setPlaceholderText("单击图节点后显示 commit 详情")
+        graph_splitter.addWidget(self.branch_graph_detail)
+        graph_splitter.setStretchFactor(0, 5)
+        graph_splitter.setStretchFactor(1, 2)
+        graph_splitter.setSizes([780, 300])
+        graph_layout.addWidget(graph_splitter, 1)
+        self.branch_view_tabs.addTab(graph_page, "有向图")
+
         self.tabs.addTab(page, "分支")
 
     def _build_remote_tab(self) -> None:
@@ -588,9 +739,30 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.platform_output, 1)
         self.tabs.addTab(page, "平台")
 
-    def _build_log_bar(self, root: QVBoxLayout) -> None:
-        bar = QGroupBox("Command Bar / Log")
-        layout = QVBoxLayout(bar)
+    def _build_log_bar(self) -> None:
+        self.log_bar = QGroupBox("Command Bar / Log")
+        self.log_bar.setMinimumHeight(42)
+        self.log_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout = QVBoxLayout(self.log_bar)
+        layout.setContentsMargins(8, 10, 8, 8)
+        layout.setSpacing(6)
+
+        header = QHBoxLayout()
+        self.bottom_toggle_button = QPushButton("▼")
+        self.bottom_toggle_button.setObjectName("CollapseButton")
+        self.bottom_toggle_button.setToolTip("收起底部栏")
+        self.bottom_toggle_button.clicked.connect(self.toggle_bottom_bar)
+        title = QLabel("命令栏 / 日志")
+        title.setObjectName("PaneTitle")
+        header.addWidget(self.bottom_toggle_button)
+        header.addWidget(title)
+        header.addStretch(1)
+        layout.addLayout(header)
+
+        self.log_content = QWidget()
+        content_layout = QVBoxLayout(self.log_content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(6)
         cmd_row = QHBoxLayout()
         self.raw_command = QLineEdit()
         self.raw_command.setPlaceholderText(":git status -sb  或  status -sb")
@@ -600,13 +772,119 @@ class MainWindow(QMainWindow):
         cmd_row.addWidget(QLabel(":"))
         cmd_row.addWidget(self.raw_command, 1)
         cmd_row.addWidget(run_btn)
-        layout.addLayout(cmd_row)
+        content_layout.addLayout(cmd_row)
         self.command_log = QPlainTextEdit()
         self.command_log.setReadOnly(True)
         self.command_log.setMaximumBlockCount(5000)
-        self.command_log.setMinimumHeight(150)
-        layout.addWidget(self.command_log)
-        root.addWidget(bar)
+        self.command_log.setMinimumHeight(80)
+        self.command_log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        content_layout.addWidget(self.command_log, 1)
+        layout.addWidget(self.log_content, 1)
+
+    def _compact_ui_controls(self) -> None:
+        """Let the VS Code-like splitters win over verbose control rows.
+
+        Many tabs contain long button captions. If Qt uses their sizeHint as a
+        hard layout minimum, the center pane becomes too wide and sidebars cannot
+        expand. Mark these controls as horizontally shrinkable; text can clip at
+        very small widths, but the user can freely resize panes.
+        """
+        for button in self.findChildren(QPushButton):
+            if button.objectName() == "CollapseButton":
+                continue
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            if button.text() and not button.toolTip():
+                button.setToolTip(button.text())
+        for line_edit in self.findChildren(QLineEdit):
+            line_edit.setMinimumWidth(0)
+            line_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        for combo in self.findChildren(QComboBox):
+            combo.setMinimumWidth(0)
+            combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        for tree in self.findChildren(QTreeWidget):
+            tree.setMinimumWidth(0)
+            tree.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        for list_widget in self.findChildren(QListWidget):
+            list_widget.setMinimumWidth(0)
+            list_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.tabs.setMinimumWidth(120)
+        self.center_splitter.setMinimumWidth(120)
+
+    def toggle_left_sidebar(self) -> None:
+        sizes = self.main_splitter.sizes()
+        if not self._left_collapsed:
+            self._last_left_width = max(sizes[0], 180) if sizes else self._last_left_width
+            self.navigator.setVisible(False)
+            self.left_pane.setMaximumWidth(44)
+            self.left_toggle_button.setText("▶")
+            self.left_toggle_button.setToolTip("展开左侧栏")
+            self._left_collapsed = True
+            if len(sizes) == 3:
+                self.main_splitter.setSizes([44, sizes[1] + max(sizes[0] - 44, 0), sizes[2]])
+        else:
+            self.left_pane.setMaximumWidth(16777215)
+            self.navigator.setVisible(True)
+            self.left_toggle_button.setText("◀")
+            self.left_toggle_button.setToolTip("收起左侧栏")
+            self._left_collapsed = False
+            sizes = self.main_splitter.sizes()
+            if len(sizes) == 3:
+                self.main_splitter.setSizes([self._last_left_width, max(sizes[1] - self._last_left_width + 44, 300), sizes[2]])
+
+    def toggle_right_sidebar(self) -> None:
+        sizes = self.main_splitter.sizes()
+        if not self._right_collapsed:
+            self._last_right_width = max(sizes[2], 220) if len(sizes) == 3 else self._last_right_width
+            self.context_panel.setVisible(False)
+            self.right_pane.setMaximumWidth(44)
+            self.right_toggle_button.setText("◀")
+            self.right_toggle_button.setToolTip("展开右侧栏")
+            self._right_collapsed = True
+            if len(sizes) == 3:
+                self.main_splitter.setSizes([sizes[0], sizes[1] + max(sizes[2] - 44, 0), 44])
+        else:
+            self.right_pane.setMaximumWidth(16777215)
+            self.context_panel.setVisible(True)
+            self.right_toggle_button.setText("▶")
+            self.right_toggle_button.setToolTip("收起右侧栏")
+            self._right_collapsed = False
+            sizes = self.main_splitter.sizes()
+            if len(sizes) == 3:
+                self.main_splitter.setSizes([sizes[0], max(sizes[1] - self._last_right_width + 44, 300), self._last_right_width])
+
+    def toggle_bottom_bar(self) -> None:
+        sizes = self.center_splitter.sizes()
+        if not self._bottom_collapsed:
+            self._last_bottom_height = max(sizes[1], 160) if len(sizes) == 2 else self._last_bottom_height
+            self.log_content.setVisible(False)
+            self.log_bar.setMaximumHeight(50)
+            self.bottom_toggle_button.setText("▲")
+            self.bottom_toggle_button.setToolTip("展开底部栏")
+            self._bottom_collapsed = True
+            if len(sizes) == 2:
+                self.center_splitter.setSizes([sizes[0] + max(sizes[1] - 50, 0), 50])
+        else:
+            self.log_bar.setMaximumHeight(16777215)
+            self.log_content.setVisible(True)
+            self.bottom_toggle_button.setText("▼")
+            self.bottom_toggle_button.setToolTip("收起底部栏")
+            self._bottom_collapsed = False
+            sizes = self.center_splitter.sizes()
+            if len(sizes) == 2:
+                self.center_splitter.setSizes([max(sizes[0] - self._last_bottom_height + 50, 300), self._last_bottom_height])
+
+    def change_theme_mode(self, mode: str) -> None:
+        self.theme_mode = mode
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, self, self.theme_mode, self.theme_accent)
+
+    def change_theme_accent(self, accent: str) -> None:
+        self.theme_accent = accent
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, self, self.theme_mode, self.theme_accent)
 
     def _wire_shortcuts(self) -> None:
         self.open_repo_action.setShortcut(QKeySequence("Ctrl+O"))
@@ -677,8 +955,10 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self._command_finished)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
+        # Keep Python references while the command runs, then clean them before Qt deletes the C++ object.
         self._threads.append((thread, worker))
+        thread.finished.connect(lambda t=thread, w=worker: self._cleanup_thread(t, w))
+        thread.finished.connect(thread.deleteLater)
         thread.start()
 
     def _command_finished(self, result: GitResult, callback: Optional[Callable[[GitResult], None]]) -> None:
@@ -686,7 +966,12 @@ class MainWindow(QMainWindow):
         self.append_log(f"{status} {result.command_text}\n{result.output or '(no output)'}")
         if callback:
             callback(result)
-        self._threads = [(t, w) for (t, w) in self._threads if t.isRunning()]
+
+    def _cleanup_thread(self, thread: QThread, worker: GitCommandWorker) -> None:
+        # Do not call thread.isRunning() here: on Windows/PyQt the wrapped C++
+        # QThread may already be scheduled for deletion, which caused
+        # RuntimeError: wrapped C/C++ object of type QThread has been deleted.
+        self._threads = [(t, w) for (t, w) in self._threads if t is not thread and w is not worker]
 
     def run_raw_command(self) -> None:
         raw = self.raw_command.text().strip()
@@ -776,6 +1061,7 @@ class MainWindow(QMainWindow):
         self.refresh_worktree()
         self.refresh_history(all_branches=True)
         self.refresh_branches()
+        self.refresh_branch_graph()
         self.refresh_remotes()
         self.refresh_tags_stash()
         self.refresh_conflicts()
@@ -962,6 +1248,65 @@ class MainWindow(QMainWindow):
         if result.ok:
             for line in result.stdout.splitlines():
                 self.branch_list.addItem(line)
+
+    def refresh_branch_graph(self) -> None:
+        if not hasattr(self, "branch_graph_view"):
+            return
+        if not self.runner.repo_path:
+            self.branch_graph_view.set_commits([])
+            return
+        result = self.runner.run([
+            "log",
+            "--topo-order",
+            "--all",
+            "--parents",
+            "--date=short",
+            "--pretty=format:%H%x09%P%x09%h%x09%ad%x09%an%x09%D%x09%s",
+            "-n",
+            "260",
+        ])
+        commits: List[GraphCommit] = []
+        if result.ok:
+            for line in result.stdout.splitlines():
+                parts = line.split("\t")
+                if len(parts) < 7:
+                    continue
+                full_hash, parent_text, short_hash, date, author, refs, message = parts[:7]
+                parents = [p for p in parent_text.split() if p]
+                commits.append(GraphCommit(full_hash, parents, short_hash, date, author, refs, message))
+        self.branch_graph_view.set_commits(commits)
+        if not commits:
+            self.branch_graph_detail.setPlainText(result.output if not result.ok else "没有提交历史。")
+
+    def fit_branch_graph(self) -> None:
+        if hasattr(self, "branch_graph_view") and self.branch_graph_view.scene() is not None:
+            rect = self.branch_graph_view.scene().sceneRect()
+            if rect.isValid() and not rect.isEmpty():
+                self.branch_graph_view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def graph_commit_selected(self, commit_hash: str) -> None:
+        result = self.runner.run(["show", "--stat", "--pretty=fuller", commit_hash])
+        self.branch_graph_detail.setPlainText(result.output)
+
+    def graph_checkout_commit(self, commit_hash: str) -> None:
+        self.run_git_command(["checkout", commit_hash], callback=lambda _: self.refresh_all())
+
+    def graph_create_branch_from_commit(self, commit_hash: str) -> None:
+        name, ok = QInputDialog.getText(self, "从图节点创建分支", "分支名：")
+        if ok and name.strip():
+            self.run_git_command(["switch", "-c", name.strip(), commit_hash], callback=lambda _: self.refresh_all())
+
+    def graph_commit_context_menu(self, commit_hash: str, pos: QPoint) -> None:
+        menu = QMenu(self)
+        menu.addAction("Checkout this commit", lambda: self.graph_checkout_commit(commit_hash))
+        menu.addAction("Create branch here", lambda: self.graph_create_branch_from_commit(commit_hash))
+        menu.addAction("Cherry-pick into current branch", lambda: self.run_git_command(["cherry-pick", commit_hash], callback=lambda _: self.refresh_all()))
+        menu.addAction("Revert this commit", lambda: self.run_git_command(["revert", commit_hash], callback=lambda _: self.refresh_all()))
+        menu.addAction("Reset current branch --hard here", lambda: self.run_git_command(["reset", "--hard", commit_hash], callback=lambda _: self.refresh_all()))
+        menu.addAction("Compare with HEAD", lambda: self.run_git_command(["diff", "HEAD", commit_hash], callback=self.show_result_in_log))
+        menu.addAction("Copy commit hash", lambda: QApplication.clipboard().setText(commit_hash))
+        menu.addAction("Show raw object", lambda: self.run_git_command(["cat-file", "-p", commit_hash], callback=self.show_result_in_log))
+        menu.exec(pos)
 
     def _selected_branch_name(self) -> Optional[str]:
         item = self.branch_list.currentItem()
