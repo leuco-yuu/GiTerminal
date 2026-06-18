@@ -1,6 +1,35 @@
-.venv/
+# Python bytecode and caches
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+*.whl
+*.tar.gz
+
+# IDE/editor/system files
+.vscode/
+.idea/
+*.swp
 .DS_Store
+Thumbs.db
+
+# Local runtime/generated artifacts
 *.bundle
 git-terminal-archive.zip
+logs/
+.tmp/

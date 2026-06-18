@@ -1,0 +1,8 @@
+include README.md
+include CHANGELOG.md
+include LICENSE
+recursive-include src/git_terminal/assets *.svg
+recursive-include src/git_terminal *.json
+recursive-include docs *.md
+graft tests
+global-exclude __pycache__ *.py[cod] .DS_Store
