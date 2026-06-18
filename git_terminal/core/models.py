@@ -17,8 +17,19 @@ class GitResult:
     command: List[str]
     cwd: Optional[str]
     returncode: int
-    stdout: str
-    stderr: str
+    stdout: str | None
+    stderr: str | None
+
+    def __post_init__(self) -> None:
+        # Windows subprocess reader threads can fail to decode output if Python
+        # falls back to a legacy locale. Always normalize to strings so UI code
+        # never crashes on `None.splitlines()`.
+        if isinstance(self.stdout, bytes):
+            self.stdout = self.stdout.decode("utf-8", errors="replace")
+        if isinstance(self.stderr, bytes):
+            self.stderr = self.stderr.decode("utf-8", errors="replace")
+        self.stdout = self.stdout or ""
+        self.stderr = self.stderr or ""
 
     @property
     def ok(self) -> bool:

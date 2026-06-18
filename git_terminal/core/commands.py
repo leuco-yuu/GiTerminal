@@ -138,7 +138,7 @@ def flat_fallback_specs() -> List[GitCommandSpec]:
 
 def load_git_help_commands() -> List[str]:
     try:
-        proc = subprocess.run(["git", "help", "-a"], text=True, capture_output=True, timeout=10)
+        proc = subprocess.run(["git", "help", "-a"], text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=10)
     except Exception:
         return []
     if proc.returncode != 0:

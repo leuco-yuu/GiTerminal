@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDockWidget,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -36,6 +37,7 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QTextEdit,
     QToolBar,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -49,6 +51,7 @@ from git_terminal.core.safety import classify_git_command
 from git_terminal.ui.workers import GitCommandWorker
 from git_terminal.ui.theme import apply_theme
 from git_terminal.ui.commit_graph import CommitGraphView, GraphCommit
+from git_terminal.ui.vscode_shell import ActivityBar, BottomPanel, SidePanel, TopCommandBar
 
 
 class CloneDialog(QDialog):
@@ -186,88 +189,99 @@ class MainWindow(QMainWindow):
         help_menu.addAction("快捷键", self.show_shortcuts)
         help_menu.addAction("关于 Git Terminal", self.show_about)
 
-        toolbar = QToolBar("主工具栏")
-        toolbar.addAction(self.open_repo_action)
-        toolbar.addAction(self.init_repo_action)
-        toolbar.addAction(self.clone_repo_action)
-        toolbar.addAction(self.refresh_action)
-        self.addToolBar(toolbar)
+        # Keep the uploaded VS Code-style template clean: no extra top toolbar.
+        # The same actions remain available from the menu, the top command bar,
+        # the left side panel header, and the terminal command input.
 
     def _build_ui(self) -> None:
-        central = QWidget()
-        root = QVBoxLayout(central)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(8)
+        # Use the uploaded VS Code-style template layout without changing its
+        # core logic: top command bar + activity bar + left side bar + center
+        # workspace + right side bar + bottom panel with terminal input.
+        root = QWidget()
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        self.status_bar_label = QLabel("Repo: - | Branch: - | HEAD: - | Remote: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: -")
-        self.status_bar_label.setObjectName("TopStatusLabel")
-        self.status_bar_label.setFrameShape(QFrame.Shape.StyledPanel)
-        self.status_bar_label.setMinimumHeight(38)
-        root.addWidget(self.status_bar_label)
+        self.top_bar = TopCommandBar()
+        root_layout.addWidget(self.top_bar)
 
-        # Main layout: left sidebar | center vertical splitter | right sidebar.
-        # The bottom command/log bar lives inside the center splitter, so sidebars
-        # extend all the way to the bottom and the log bar aligns with the center.
-        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.main_splitter.setChildrenCollapsible(True)
-        self.main_splitter.setHandleWidth(7)
-        root.addWidget(self.main_splitter, 1)
+        content = QWidget()
+        content_layout = QHBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
 
-        self.left_pane = QWidget()
-        self.left_pane.setObjectName("LeftPane")
-        self.left_pane.setMinimumWidth(36)
-        self.left_pane.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        left_layout = QVBoxLayout(self.left_pane)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
-        self.left_toggle_button = QPushButton("◀")
-        self.left_toggle_button.setObjectName("CollapseButton")
-        self.left_toggle_button.setToolTip("收起左侧栏")
-        self.left_toggle_button.clicked.connect(self.toggle_left_sidebar)
-        left_layout.addWidget(self._make_pane_header("导航", self.left_toggle_button))
+        self.activity_bar = ActivityBar()
+        content_layout.addWidget(self.activity_bar)
+
+        self.horizontal_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.horizontal_splitter.setChildrenCollapsible(False)
+        self.horizontal_splitter.setHandleWidth(1)
+
+        self.left_sidebar = SidePanel("GIT TERMINAL", side="left", min_size=220)
+        self.left_sidebar.set_collapse_callback(lambda: self.set_left_sidebar_visible(False))
+        self.left_sidebar.add_header_action("+").clicked.connect(self.open_repository)
+        self.left_sidebar.add_header_action("↻").clicked.connect(self.refresh_all)
+        self.left_sidebar.add_header_action("⋯").clicked.connect(self.show_terminal_help)
         self.navigator = QTreeWidget()
-        self.navigator.setHeaderLabel("Git Terminal")
+        self.navigator.setHeaderHidden(True)
         self.navigator.setMinimumWidth(0)
-        self.navigator.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.navigator.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         self._populate_navigator()
         self.navigator.itemClicked.connect(self._navigator_clicked)
-        left_layout.addWidget(self.navigator, 1)
-        self.main_splitter.addWidget(self.left_pane)
+        self.left_sidebar.body_layout.addWidget(self.navigator)
 
         self.center_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.center_splitter.setChildrenCollapsible(True)
-        self.center_splitter.setHandleWidth(7)
+        self.center_splitter.setChildrenCollapsible(False)
+        self.center_splitter.setHandleWidth(1)
         self.center_splitter.setMinimumWidth(120)
-        self.center_splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        workspace = QWidget()
+        workspace_layout = QVBoxLayout(workspace)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(0)
+        self.status_bar_label = QLabel("Repo: - | Branch: - | HEAD: - | Remote: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: -")
+        self.status_bar_label.setObjectName("TopStatusLabel")
+        self.status_bar_label.setMinimumHeight(30)
+        workspace_layout.addWidget(self.status_bar_label)
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("editorTabs")
+        self.tabs.setDocumentMode(True)
+        self.tabs.setTabsClosable(False)
+        self.tabs.setMovable(True)
         self.tabs.setUsesScrollButtons(True)
         self.tabs.tabBar().setExpanding(False)
-        self.tabs.setMinimumWidth(120)
+        self.tabs.setMinimumWidth(80)
         self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.center_splitter.addWidget(self.tabs)
-        self._build_log_bar()
-        self.center_splitter.addWidget(self.log_bar)
-        self.center_splitter.setStretchFactor(0, 8)
-        self.center_splitter.setStretchFactor(1, 2)
-        self.center_splitter.setSizes([690, 220])
-        self.main_splitter.addWidget(self.center_splitter)
+        workspace_layout.addWidget(self.tabs, 1)
 
-        self.right_pane = QWidget()
-        self.right_pane.setObjectName("RightPane")
-        self.right_pane.setMinimumWidth(36)
-        self.right_pane.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        right_layout = QVBoxLayout(self.right_pane)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(6)
-        self.right_toggle_button = QPushButton("▶")
-        self.right_toggle_button.setObjectName("CollapseButton")
-        self.right_toggle_button.setToolTip("收起右侧栏")
-        self.right_toggle_button.clicked.connect(self.toggle_right_sidebar)
-        right_layout.addWidget(self._make_pane_header("上下文操作", self.right_toggle_button, button_first=False))
+        self.bottom_panel = BottomPanel()
+        self.bottom_panel.set_hide_callback(lambda: self.set_bottom_panel_visible(False))
+        self._build_log_bar()
+        self.bottom_panel.tabs.addTab(self.log_bar, "TERMINAL")
+        self.problems_list = QListWidget()
+        self.problems_list.addItem("✓ Git Terminal ready.")
+        self.problems_list.addItem("ℹ Open a repository to inspect status.")
+        self.bottom_panel.tabs.addTab(self.problems_list, "PROBLEMS")
+        self.output_panel = QPlainTextEdit()
+        self.output_panel.setObjectName("terminalOutput")
+        self.output_panel.setReadOnly(True)
+        self.output_panel.setPlainText("[Git Terminal] Output panel initialized.")
+        self.bottom_panel.tabs.addTab(self.output_panel, "OUTPUT")
+        self.debug_panel = QListWidget()
+        self.debug_panel.addItems(["Command history", "Safety guard", "Recovery hints"])
+        self.bottom_panel.tabs.addTab(self.debug_panel, "DEBUG CONSOLE")
+
+        self.center_splitter.addWidget(workspace)
+        self.center_splitter.addWidget(self.bottom_panel)
+        self.center_splitter.setSizes([570, 210])
+
+        self.right_sidebar = SidePanel("CONTEXT", side="right", min_size=220)
+        self.right_sidebar.set_collapse_callback(lambda: self.set_right_sidebar_visible(False))
         self.context_panel = QWidget()
-        self.context_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.context_panel.setMinimumWidth(0)
         context_layout = QVBoxLayout(self.context_panel)
-        context_layout.setContentsMargins(0, 0, 0, 0)
+        context_layout.setContentsMargins(8, 8, 8, 8)
+        context_layout.setSpacing(8)
         self.context_buttons = []
         for text, handler in [
             ("git status -sb", lambda: self.run_git_command(["status", "-sb"], callback=lambda _: self.refresh_all())),
@@ -284,12 +298,26 @@ class MainWindow(QMainWindow):
             context_layout.addWidget(btn)
             self.context_buttons.append(btn)
         context_layout.addStretch(1)
-        right_layout.addWidget(self.context_panel, 1)
-        self.main_splitter.addWidget(self.right_pane)
-        self.main_splitter.setStretchFactor(0, 1)
-        self.main_splitter.setStretchFactor(1, 6)
-        self.main_splitter.setStretchFactor(2, 1)
-        self.main_splitter.setSizes([260, 940, 300])
+        self.right_sidebar.body_layout.addWidget(self.context_panel)
+
+        self.horizontal_splitter.addWidget(self.left_sidebar)
+        self.horizontal_splitter.addWidget(self.center_splitter)
+        self.horizontal_splitter.addWidget(self.right_sidebar)
+        self.horizontal_splitter.setSizes([270, 840, 270])
+
+        content_layout.addWidget(self.horizontal_splitter)
+        root_layout.addWidget(content, 1)
+        self.setCentralWidget(root)
+
+        self.top_bar.left_sidebar_button.clicked.connect(self.toggle_left_sidebar)
+        self.top_bar.right_sidebar_button.clicked.connect(self.toggle_right_sidebar)
+        self.top_bar.bottom_panel_button.clicked.connect(self.toggle_bottom_panel)
+        self.top_bar.refresh_button.clicked.connect(self.refresh_all)
+        self.top_bar.command_center.returnPressed.connect(self.run_command_center)
+
+        activity_targets = [0, 0, 2, 3, 6]
+        for index, button in enumerate(self.activity_bar.buttons):
+            button.clicked.connect(lambda _checked, i=index: self.activate_activity_tab(i, activity_targets[i]))
 
         self._build_workspace_tab()
         self._build_history_tab()
@@ -302,23 +330,57 @@ class MainWindow(QMainWindow):
         self._build_platform_tab()
         self._compact_ui_controls()
 
-        self.setCentralWidget(central)
+    def activate_activity_tab(self, index: int, tab_index: int) -> None:
+        self.set_left_sidebar_visible(True)
+        if 0 <= tab_index < self.tabs.count():
+            self.tabs.setCurrentIndex(tab_index)
 
-    def _make_pane_header(self, title: str, button: QPushButton, button_first: bool = True) -> QFrame:
-        header = QFrame()
-        header.setObjectName("PaneHeader")
-        header.setMinimumHeight(38)
-        layout = QHBoxLayout(header)
-        layout.setContentsMargins(8, 4, 8, 4)
-        label = QLabel(title)
-        label.setObjectName("PaneTitle")
-        if button_first:
-            layout.addWidget(button)
-            layout.addWidget(label, 1)
+    def set_left_sidebar_visible(self, visible: bool) -> None:
+        self.left_sidebar.setVisible(visible)
+        self.top_bar.left_sidebar_button.setChecked(visible)
+        if visible:
+            self.horizontal_splitter.setSizes([270, 840, 270 if self.right_sidebar.isVisible() else 0])
+
+    def set_right_sidebar_visible(self, visible: bool) -> None:
+        self.right_sidebar.setVisible(visible)
+        self.top_bar.right_sidebar_button.setChecked(visible)
+        if visible:
+            self.horizontal_splitter.setSizes([270 if self.left_sidebar.isVisible() else 0, 840, 270])
+
+    def set_bottom_panel_visible(self, visible: bool) -> None:
+        self.bottom_panel.setVisible(visible)
+        self.top_bar.bottom_panel_button.setChecked(visible)
+        if visible:
+            self.center_splitter.setSizes([570, 210])
+
+    def toggle_left_sidebar(self) -> None:
+        self.set_left_sidebar_visible(not self.left_sidebar.isVisible())
+
+    def toggle_right_sidebar(self) -> None:
+        self.set_right_sidebar_visible(not self.right_sidebar.isVisible())
+
+    def toggle_bottom_panel(self) -> None:
+        self.set_bottom_panel_visible(not self.bottom_panel.isVisible())
+
+    def run_command_center(self) -> None:
+        text = self.top_bar.command_center.text().strip()
+        self.top_bar.command_center.clear()
+        if not text:
+            return
+        lower = text.lower()
+        if lower in {"status", "git status"}:
+            self.tabs.setCurrentIndex(0)
+            self.run_git_command(["status", "-sb"], callback=lambda _: self.refresh_all())
+        elif lower in {"branches", "branch"}:
+            self.tabs.setCurrentIndex(2)
+        elif lower in {"remotes", "remote"}:
+            self.tabs.setCurrentIndex(3)
+        elif lower.startswith("git "):
+            self.raw_command.setText(text)
+            self.run_raw_command()
         else:
-            layout.addWidget(label, 1)
-            layout.addWidget(button)
-        return header
+            self.raw_command.setText(text if text.startswith(":") else ":git " + text)
+            self.run_raw_command()
 
     def _populate_navigator(self) -> None:
         groups = {
@@ -469,12 +531,13 @@ class MainWindow(QMainWindow):
         graph_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.branch_graph_view = CommitGraphView()
         self.branch_graph_view.commitSelected.connect(self.graph_commit_selected)
+        self.branch_graph_view.commitHovered.connect(self.graph_commit_selected)
         self.branch_graph_view.commitActivated.connect(self.graph_checkout_commit)
         self.branch_graph_view.commitContextRequested.connect(self.graph_commit_context_menu)
         graph_splitter.addWidget(self.branch_graph_view)
         self.branch_graph_detail = QPlainTextEdit()
         self.branch_graph_detail.setReadOnly(True)
-        self.branch_graph_detail.setPlaceholderText("单击图节点后显示 commit 详情")
+        self.branch_graph_detail.setPlaceholderText("鼠标悬浮或单击图节点后显示 commit 详情")
         graph_splitter.addWidget(self.branch_graph_detail)
         graph_splitter.setStretchFactor(0, 5)
         graph_splitter.setStretchFactor(1, 2)
@@ -740,46 +803,44 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(page, "平台")
 
     def _build_log_bar(self) -> None:
-        self.log_bar = QGroupBox("Command Bar / Log")
-        self.log_bar.setMinimumHeight(42)
+        self.log_bar = QWidget()
+        self.log_bar.setObjectName("terminalPage")
+        self.log_bar.setMinimumHeight(60)
         self.log_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(self.log_bar)
-        layout.setContentsMargins(8, 10, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        header = QHBoxLayout()
-        self.bottom_toggle_button = QPushButton("▼")
-        self.bottom_toggle_button.setObjectName("CollapseButton")
-        self.bottom_toggle_button.setToolTip("收起底部栏")
-        self.bottom_toggle_button.clicked.connect(self.toggle_bottom_bar)
-        title = QLabel("命令栏 / 日志")
-        title.setObjectName("PaneTitle")
-        header.addWidget(self.bottom_toggle_button)
-        header.addWidget(title)
-        header.addStretch(1)
-        layout.addLayout(header)
-
-        self.log_content = QWidget()
-        content_layout = QVBoxLayout(self.log_content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(6)
-        cmd_row = QHBoxLayout()
-        self.raw_command = QLineEdit()
-        self.raw_command.setPlaceholderText(":git status -sb  或  status -sb")
-        self.raw_command.returnPressed.connect(self.run_raw_command)
-        run_btn = QPushButton("Run Raw Git")
-        run_btn.clicked.connect(self.run_raw_command)
-        cmd_row.addWidget(QLabel(":"))
-        cmd_row.addWidget(self.raw_command, 1)
-        cmd_row.addWidget(run_btn)
-        content_layout.addLayout(cmd_row)
         self.command_log = QPlainTextEdit()
+        self.command_log.setObjectName("terminalOutput")
         self.command_log.setReadOnly(True)
         self.command_log.setMaximumBlockCount(5000)
-        self.command_log.setMinimumHeight(80)
+        self.command_log.setMinimumHeight(0)
         self.command_log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        content_layout.addWidget(self.command_log, 1)
-        layout.addWidget(self.log_content, 1)
+        layout.addWidget(self.command_log, 1)
+
+        input_bar = QFrame()
+        input_bar.setObjectName("terminalInputBar")
+        input_layout = QHBoxLayout(input_bar)
+        input_layout.setContentsMargins(10, 6, 10, 8)
+        input_layout.setSpacing(8)
+        prompt = QLabel("git >")
+        prompt.setObjectName("terminalPrompt")
+        self.raw_command = QLineEdit()
+        self.raw_command.setObjectName("terminalInput")
+        self.raw_command.setPlaceholderText("输入 Git 命令后回车执行，例如：status -sb / git log --oneline")
+        self.raw_command.returnPressed.connect(self.run_raw_command)
+        run_btn = QPushButton("Run")
+        run_btn.setObjectName("runButton")
+        run_btn.clicked.connect(self.run_raw_command)
+        clear_btn = QPushButton("Clear")
+        clear_btn.setObjectName("panelAction")
+        clear_btn.clicked.connect(lambda: self.command_log.clear())
+        input_layout.addWidget(prompt)
+        input_layout.addWidget(self.raw_command, 1)
+        input_layout.addWidget(run_btn)
+        input_layout.addWidget(clear_btn)
+        layout.addWidget(input_bar)
 
     def _compact_ui_controls(self) -> None:
         """Let the VS Code-like splitters win over verbose control rows.
@@ -792,6 +853,7 @@ class MainWindow(QMainWindow):
         for button in self.findChildren(QPushButton):
             if button.objectName() == "CollapseButton":
                 continue
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setMinimumWidth(0)
             button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             if button.text() and not button.toolTip():
@@ -808,71 +870,11 @@ class MainWindow(QMainWindow):
         for list_widget in self.findChildren(QListWidget):
             list_widget.setMinimumWidth(0)
             list_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
-        self.tabs.setMinimumWidth(120)
-        self.center_splitter.setMinimumWidth(120)
-
-    def toggle_left_sidebar(self) -> None:
-        sizes = self.main_splitter.sizes()
-        if not self._left_collapsed:
-            self._last_left_width = max(sizes[0], 180) if sizes else self._last_left_width
-            self.navigator.setVisible(False)
-            self.left_pane.setMaximumWidth(44)
-            self.left_toggle_button.setText("▶")
-            self.left_toggle_button.setToolTip("展开左侧栏")
-            self._left_collapsed = True
-            if len(sizes) == 3:
-                self.main_splitter.setSizes([44, sizes[1] + max(sizes[0] - 44, 0), sizes[2]])
-        else:
-            self.left_pane.setMaximumWidth(16777215)
-            self.navigator.setVisible(True)
-            self.left_toggle_button.setText("◀")
-            self.left_toggle_button.setToolTip("收起左侧栏")
-            self._left_collapsed = False
-            sizes = self.main_splitter.sizes()
-            if len(sizes) == 3:
-                self.main_splitter.setSizes([self._last_left_width, max(sizes[1] - self._last_left_width + 44, 300), sizes[2]])
-
-    def toggle_right_sidebar(self) -> None:
-        sizes = self.main_splitter.sizes()
-        if not self._right_collapsed:
-            self._last_right_width = max(sizes[2], 220) if len(sizes) == 3 else self._last_right_width
-            self.context_panel.setVisible(False)
-            self.right_pane.setMaximumWidth(44)
-            self.right_toggle_button.setText("◀")
-            self.right_toggle_button.setToolTip("展开右侧栏")
-            self._right_collapsed = True
-            if len(sizes) == 3:
-                self.main_splitter.setSizes([sizes[0], sizes[1] + max(sizes[2] - 44, 0), 44])
-        else:
-            self.right_pane.setMaximumWidth(16777215)
-            self.context_panel.setVisible(True)
-            self.right_toggle_button.setText("▶")
-            self.right_toggle_button.setToolTip("收起右侧栏")
-            self._right_collapsed = False
-            sizes = self.main_splitter.sizes()
-            if len(sizes) == 3:
-                self.main_splitter.setSizes([sizes[0], max(sizes[1] - self._last_right_width + 44, 300), self._last_right_width])
+        self.tabs.setMinimumWidth(80)
 
     def toggle_bottom_bar(self) -> None:
-        sizes = self.center_splitter.sizes()
-        if not self._bottom_collapsed:
-            self._last_bottom_height = max(sizes[1], 160) if len(sizes) == 2 else self._last_bottom_height
-            self.log_content.setVisible(False)
-            self.log_bar.setMaximumHeight(50)
-            self.bottom_toggle_button.setText("▲")
-            self.bottom_toggle_button.setToolTip("展开底部栏")
-            self._bottom_collapsed = True
-            if len(sizes) == 2:
-                self.center_splitter.setSizes([sizes[0] + max(sizes[1] - 50, 0), 50])
-        else:
-            self.log_bar.setMaximumHeight(16777215)
-            self.log_content.setVisible(True)
-            self.bottom_toggle_button.setText("▼")
-            self.bottom_toggle_button.setToolTip("收起底部栏")
-            self._bottom_collapsed = False
-            sizes = self.center_splitter.sizes()
-            if len(sizes) == 2:
-                self.center_splitter.setSizes([max(sizes[0] - self._last_bottom_height + 50, 300), self._last_bottom_height])
+        if hasattr(self, "bottom_panel"):
+            self.set_bottom_panel_visible(False)
 
     def change_theme_mode(self, mode: str) -> None:
         self.theme_mode = mode
@@ -987,7 +989,7 @@ class MainWindow(QMainWindow):
     def run_external_command(self, cmd: List[str]) -> None:
         self.append_log("Will run external:\n" + " ".join(shlex.quote(x) for x in cmd))
         try:
-            proc = subprocess.run(cmd, cwd=self.runner.cwd(), capture_output=True, text=True, timeout=120)
+            proc = subprocess.run(cmd, cwd=self.runner.cwd(), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
             out = (proc.stdout or "") + (proc.stderr or "")
             self.platform_output.setPlainText(out.strip() or "(no output)")
             self.append_log(("✓" if proc.returncode == 0 else "✗") + " " + " ".join(cmd) + "\n" + (out.strip() or "(no output)"))
