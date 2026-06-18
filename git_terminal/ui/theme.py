@@ -203,6 +203,58 @@ QPushButton#runButton {{
     border-radius: 4px;
     padding: 3px 10px;
 }}
+
+QFrame#workspaceOverlay {{
+    background-color: rgba(0, 0, 0, 150);
+}}
+QFrame#workspaceOverlayCard {{
+    background-color: {p['panel']};
+    border: 1px solid {p['border']};
+    border-radius: 10px;
+    min-width: 520px;
+}}
+QLabel#workspacePromptTitle {{
+    color: {p['text']};
+    font-size: 16px;
+    font-weight: 700;
+}}
+QLabel#workspacePromptMessage {{
+    color: {p['muted']};
+    font-size: 13px;
+}}
+
+QLineEdit#workspacePromptInput {{
+    background-color: {p['input']};
+    color: {p['text']};
+    border: 1px solid {p['border']};
+    border-radius: 5px;
+    padding: 7px 9px;
+    selection-background-color: {accent};
+}}
+QLineEdit#workspacePromptInput:focus {{
+    border: 1px solid {accent};
+}}
+QPushButton#workspacePromptBackButton, QPushButton#workspacePromptCancelButton {{
+    background-color: {p['panel2']};
+    color: {p['text']};
+    border: 1px solid {p['border']};
+    border-radius: 5px;
+    padding: 4px 10px;
+}}
+QPushButton#workspacePromptBackButton:hover, QPushButton#workspacePromptCancelButton:hover {{
+    background-color: {p['hover']};
+    border-color: {accent};
+}}
+QPushButton#workspacePromptOkButton {{
+    background-color: {accent};
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 4px 12px;
+}}
+QPushButton#workspacePromptOkButton:hover {{
+    background-color: {accent};
+}}
 QLabel#TopStatusLabel {{
     background-color: {p['bg']};
     color: {p['muted']};
@@ -294,6 +346,48 @@ QPlainTextEdit#terminalOutput {{
 QFrame#terminalInputBar {{
     background-color: {p['terminal']};
     border-top: 1px solid {p['border']};
+}}
+
+QFrame#terminalPromptOverlay {{
+    background-color: {p['terminal']};
+    border-top: 1px solid {p['border']};
+}}
+QFrame#terminalPromptCard {{
+    background-color: {p['panel']};
+    border: 1px solid {p['border']};
+    border-radius: 8px;
+    min-width: 360px;
+}}
+QLabel#terminalPromptTitle {{
+    color: {p['text']};
+    font-size: 15px;
+    font-weight: 700;
+}}
+QLabel#terminalPromptMessage {{
+    color: {p['muted']};
+    font-size: 13px;
+}}
+
+QPushButton#terminalPromptBackButton, QPushButton#terminalPromptCancelButton {{
+    background-color: {p['panel2']};
+    color: {p['text']};
+    border: 1px solid {p['border']};
+    border-radius: 5px;
+    padding: 4px 10px;
+}}
+QPushButton#terminalPromptBackButton:hover, QPushButton#terminalPromptCancelButton:hover {{
+    background-color: {p['hover']};
+    border-color: {accent};
+}}
+QPushButton#terminalPromptOkButton {{
+    background-color: {accent};
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 4px 12px;
+}}
+QPushButton#terminalPromptOkButton:hover {{
+    background-color: {accent};
 }}
 QLabel#terminalPrompt {{
     color: {accent};

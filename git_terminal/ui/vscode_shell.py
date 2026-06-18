@@ -154,7 +154,8 @@ class SidePanel(QFrame):
         self.side = side
         self.min_size = min_size
         self.collapse_callback = None
-        self.setMinimumWidth(min_size)
+        # Allow splitter drag-to-collapse; initial width is controlled by splitter sizes.
+        self.setMinimumWidth(0)
         self.setObjectName("sidePanel" if side == "left" else "rightPanel")
 
         main_layout = QVBoxLayout(self)
@@ -207,7 +208,7 @@ class BottomPanel(QFrame):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("bottomPanel")
-        self.setMinimumHeight(72)
+        self.setMinimumHeight(0)
         self.hide_callback = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

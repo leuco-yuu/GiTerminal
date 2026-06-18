@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QGridLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -35,6 +34,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QSizePolicy,
     QSplitter,
+    QStackedLayout,
     QTabWidget,
     QTextEdit,
     QToolBar,
@@ -210,12 +210,24 @@ class MainWindow(QMainWindow):
         advanced_menu.addAction("fsck --full", lambda: self.run_git_command(["fsck", "--full"], callback=self.show_result_in_log, timeout=300))
         advanced_menu.addAction("gc", lambda: self.run_git_command(["gc"], callback=self.show_result_in_log, timeout=300))
         advanced_menu.addAction("count-objects -vH", lambda: self.run_git_command(["count-objects", "-vH"], callback=self.show_result_in_log))
+        advanced_menu.addSeparator()
+        advanced_menu.addAction("Worktree Add...", self.worktree_add_from_menu)
+        advanced_menu.addAction("Worktree Remove...", self.worktree_remove_from_menu)
+        advanced_menu.addAction("Submodule Add...", self.submodule_add_from_menu)
+        advanced_menu.addAction("Submodule Update --init --recursive", lambda: self.run_git_command(["submodule", "update", "--init", "--recursive"], callback=self.show_result_in_log, timeout=900))
+        advanced_menu.addAction("LFS Track...", self.lfs_track_from_menu)
+        advanced_menu.addAction("Bisect Start", lambda: self.run_git_command(["bisect", "start"], callback=self.show_result_in_log))
+        advanced_menu.addAction("Bisect Good...", self.bisect_good_from_menu)
+        advanced_menu.addAction("Bisect Bad...", self.bisect_bad_from_menu)
+        advanced_menu.addAction("Bisect Reset", lambda: self.run_git_command(["bisect", "reset"], callback=self.show_result_in_log))
+        advanced_menu.addSeparator()
         advanced_menu.addAction("复制最后命令", self.copy_last_command)
 
         view_menu = self.menuBar().addMenu("视图")
         view_menu.addAction("显示/隐藏左侧栏", self.toggle_left_sidebar)
         view_menu.addAction("显示/隐藏右侧栏", self.toggle_right_sidebar)
         view_menu.addAction("显示/隐藏底部栏", self.toggle_bottom_panel)
+        view_menu.addAction("放大/缩小终端", self.toggle_bottom_maximized)
         view_menu.addSeparator()
         view_menu.addAction("工作区", lambda: self.tabs.setCurrentIndex(0) if hasattr(self, "tabs") else None)
         view_menu.addAction("历史", lambda: self.tabs.setCurrentIndex(1) if hasattr(self, "tabs") else None)
@@ -302,8 +314,9 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self.activity_bar)
 
         self.horizontal_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.horizontal_splitter.setChildrenCollapsible(False)
+        self.horizontal_splitter.setChildrenCollapsible(True)
         self.horizontal_splitter.setHandleWidth(1)
+        self.horizontal_splitter.splitterMoved.connect(self._on_horizontal_splitter_moved)
 
         self.left_sidebar = SidePanel("GIT TERMINAL", side="left", min_size=220)
         self.left_sidebar.set_collapse_callback(lambda: self.set_left_sidebar_visible(False))
@@ -319,14 +332,20 @@ class MainWindow(QMainWindow):
         self.left_sidebar.body_layout.addWidget(self.navigator)
 
         self.center_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.center_splitter.setChildrenCollapsible(False)
+        self.center_splitter.setChildrenCollapsible(True)
         self.center_splitter.setHandleWidth(1)
         self.center_splitter.setMinimumWidth(120)
+        self.center_splitter.splitterMoved.connect(self._on_center_splitter_moved)
 
         workspace = QWidget()
         self.workspace_container = workspace
-        workspace.setMinimumHeight(280)
-        workspace_layout = QVBoxLayout(workspace)
+        workspace.setMinimumHeight(0)
+        self.workspace_stack = QStackedLayout(workspace)
+        self.workspace_stack.setContentsMargins(0, 0, 0, 0)
+        self.workspace_stack.setStackingMode(QStackedLayout.StackingMode.StackAll)
+
+        self.workspace_content = QWidget()
+        workspace_layout = QVBoxLayout(self.workspace_content)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(0)
         self.status_bar_label = QLabel("Repo: - | Branch: - | HEAD: - | Remote: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: -")
@@ -344,6 +363,62 @@ class MainWindow(QMainWindow):
         self.tabs.setMinimumWidth(80)
         self.tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         workspace_layout.addWidget(self.tabs, 1)
+        self.workspace_stack.addWidget(self.workspace_content)
+
+        self.workspace_overlay = QFrame()
+        self.workspace_overlay.setObjectName("workspaceOverlay")
+        self.workspace_overlay.setVisible(False)
+        overlay_outer = QVBoxLayout(self.workspace_overlay)
+        overlay_outer.setContentsMargins(18, 18, 18, 18)
+        overlay_outer.setSpacing(10)
+
+        overlay_top = QHBoxLayout()
+        self.workspace_prompt_back = QPushButton("← 返回")
+        self.workspace_prompt_back.setObjectName("workspacePromptBackButton")
+        self.workspace_prompt_back.setMinimumWidth(86)
+        self.workspace_prompt_back.setFixedHeight(30)
+        self.workspace_prompt_back.clicked.connect(self._cancel_workspace_prompt)
+        overlay_top.addWidget(self.workspace_prompt_back, 0, Qt.AlignmentFlag.AlignLeft)
+        overlay_top.addStretch(1)
+        overlay_outer.addLayout(overlay_top)
+        overlay_outer.addStretch(1)
+
+        overlay_card = QFrame()
+        overlay_card.setObjectName("workspaceOverlayCard")
+        card = QVBoxLayout(overlay_card)
+        card.setContentsMargins(20, 18, 20, 18)
+        card.setSpacing(10)
+        self.workspace_prompt_title = QLabel("")
+        self.workspace_prompt_title.setObjectName("workspacePromptTitle")
+        self.workspace_prompt_message = QLabel("")
+        self.workspace_prompt_message.setObjectName("workspacePromptMessage")
+        self.workspace_prompt_message.setWordWrap(True)
+        self.workspace_prompt_form_widget = QWidget()
+        self.workspace_prompt_form = QFormLayout(self.workspace_prompt_form_widget)
+        self.workspace_prompt_form.setContentsMargins(0, 0, 0, 0)
+        self.workspace_prompt_form.setSpacing(8)
+        self.workspace_prompt_fields = {}
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.workspace_prompt_cancel = QPushButton("取消")
+        self.workspace_prompt_cancel.setObjectName("workspacePromptCancelButton")
+        self.workspace_prompt_cancel.setMinimumWidth(86)
+        self.workspace_prompt_cancel.setFixedHeight(30)
+        self.workspace_prompt_cancel.clicked.connect(self._cancel_workspace_prompt)
+        self.workspace_prompt_ok = QPushButton("确定")
+        self.workspace_prompt_ok.setObjectName("workspacePromptOkButton")
+        self.workspace_prompt_ok.setMinimumWidth(86)
+        self.workspace_prompt_ok.setFixedHeight(30)
+        self.workspace_prompt_ok.clicked.connect(self._submit_workspace_prompt)
+        button_row.addWidget(self.workspace_prompt_cancel)
+        button_row.addWidget(self.workspace_prompt_ok)
+        card.addWidget(self.workspace_prompt_title)
+        card.addWidget(self.workspace_prompt_message)
+        card.addWidget(self.workspace_prompt_form_widget)
+        card.addLayout(button_row)
+        overlay_outer.addWidget(overlay_card, 0, Qt.AlignmentFlag.AlignHCenter)
+        overlay_outer.addStretch(2)
+        self.workspace_stack.addWidget(self.workspace_overlay)
 
         self.bottom_panel = BottomPanel()
         self.bottom_panel.set_hide_callback(lambda: self.set_bottom_panel_visible(False))
@@ -504,8 +579,17 @@ class MainWindow(QMainWindow):
             ("Reset --hard...", self.reset_hard_from_menu),
             None,
             ("Worktree List", lambda: self.run_git_command(["worktree", "list"], callback=self.show_result_in_log)),
+            ("Worktree Add...", self.worktree_add_from_menu),
+            ("Worktree Remove...", self.worktree_remove_from_menu),
             ("Submodule Status", lambda: self.run_git_command(["submodule", "status", "--recursive"], callback=self.show_result_in_log, timeout=300)),
+            ("Submodule Add...", self.submodule_add_from_menu),
+            ("Submodule Update --init --recursive", lambda: self.run_git_command(["submodule", "update", "--init", "--recursive"], callback=self.show_result_in_log, timeout=900)),
             ("LFS Status", lambda: self.run_git_command(["lfs", "status"], callback=self.show_result_in_log, timeout=300)),
+            ("LFS Track...", self.lfs_track_from_menu),
+            ("Bisect Start", lambda: self.run_git_command(["bisect", "start"], callback=self.show_result_in_log)),
+            ("Bisect Good...", self.bisect_good_from_menu),
+            ("Bisect Bad...", self.bisect_bad_from_menu),
+            ("Bisect Reset", lambda: self.run_git_command(["bisect", "reset"], callback=self.show_result_in_log)),
             ("fsck --full", lambda: self.run_git_command(["fsck", "--full"], callback=self.show_result_in_log, timeout=300)),
             ("gc", lambda: self.run_git_command(["gc"], callback=self.show_result_in_log, timeout=300)),
             ("count-objects -vH", lambda: self.run_git_command(["count-objects", "-vH"], callback=self.show_result_in_log)),
@@ -521,6 +605,7 @@ class MainWindow(QMainWindow):
             ("显示/隐藏左侧栏", self.toggle_left_sidebar),
             ("显示/隐藏右侧栏", self.toggle_right_sidebar),
             ("显示/隐藏底部终端", self.toggle_bottom_panel),
+            ("放大/缩小终端", self.toggle_bottom_maximized),
             None,
             ("工作区", lambda: self.tabs.setCurrentIndex(0) if hasattr(self, "tabs") else None),
             ("历史", lambda: self.tabs.setCurrentIndex(1) if hasattr(self, "tabs") else None),
@@ -561,6 +646,28 @@ class MainWindow(QMainWindow):
 
     def toggle_bottom_panel(self) -> None:
         self.set_bottom_panel_visible(not self.bottom_panel.isVisible())
+
+    def _on_horizontal_splitter_moved(self, _pos: int, _index: int) -> None:
+        sizes = self.horizontal_splitter.sizes()
+        if len(sizes) >= 3:
+            if self.left_sidebar.isVisible() and sizes[0] <= 48:
+                self.set_left_sidebar_visible(False)
+            if self.right_sidebar.isVisible() and sizes[2] <= 48:
+                self.set_right_sidebar_visible(False)
+
+    def _on_center_splitter_moved(self, _pos: int, _index: int) -> None:
+        if getattr(self, "_bottom_maximized", False):
+            return
+        sizes = self.center_splitter.sizes()
+        if len(sizes) >= 2 and self.bottom_panel.isVisible():
+            top, bottom = sizes[0], sizes[1]
+            total = max(1, top + bottom)
+            # Allow the terminal to grow naturally. Only collapse or maximize
+            # when the user drags to an extreme edge.
+            if bottom <= 36:
+                self.set_bottom_panel_visible(False)
+            elif top <= 12 and bottom / total >= 0.93:
+                self.maximize_bottom_panel()
 
     def toggle_bottom_maximized(self) -> None:
         if getattr(self, "_bottom_maximized", False):
@@ -638,6 +745,45 @@ class MainWindow(QMainWindow):
         else:
             menu.exec(self.mapToGlobal(self.rect().center()))
 
+    def request_workspace_form(
+        self,
+        title: str,
+        message: str,
+        fields: list[tuple[str, str, str, bool]],
+        callback: Callable[[dict[str, str]], None],
+    ) -> None:
+        """Show a workspace-covering form with all required inputs at once."""
+        if hasattr(self, "terminal_stack") and hasattr(self, "terminal_content"):
+            self.terminal_stack.setCurrentWidget(self.terminal_content)
+        self.workspace_prompt_callback = callback
+        self.workspace_prompt_title.setText(title)
+        self.workspace_prompt_message.setText(message)
+        self._clear_workspace_prompt_form()
+        self.workspace_prompt_fields = {}
+        first_input = None
+        for key, label, default, password in fields:
+            edit = QLineEdit()
+            edit.setObjectName("workspacePromptInput")
+            edit.setText(default)
+            edit.setEchoMode(QLineEdit.EchoMode.Password if password else QLineEdit.EchoMode.Normal)
+            edit.returnPressed.connect(self._submit_workspace_prompt)
+            self.workspace_prompt_form.addRow(label, edit)
+            self.workspace_prompt_fields[key] = edit
+            if first_input is None:
+                first_input = edit
+        self.workspace_overlay.setVisible(True)
+        self.workspace_overlay.raise_()
+        self.workspace_stack.setCurrentWidget(self.workspace_overlay)
+        if first_input is not None:
+            first_input.setFocus()
+            first_input.selectAll()
+
+    def _clear_workspace_prompt_form(self) -> None:
+        if not hasattr(self, "workspace_prompt_form"):
+            return
+        while self.workspace_prompt_form.rowCount():
+            self.workspace_prompt_form.removeRow(0)
+
     def request_terminal_text(
         self,
         title: str,
@@ -646,48 +792,58 @@ class MainWindow(QMainWindow):
         default: str = "",
         password: bool = False,
     ) -> None:
-        self.set_bottom_panel_visible(True)
-        if hasattr(self, "terminal_prompt_panel"):
-            self.terminal_prompt_callback = callback
-            self.terminal_prompt_title.setText(title)
-            self.terminal_prompt_message.setText(message)
-            self.terminal_prompt_input.setText(default)
-            self.terminal_prompt_input.setEchoMode(QLineEdit.EchoMode.Password if password else QLineEdit.EchoMode.Normal)
-            self.terminal_prompt_panel.setVisible(True)
-            self.terminal_prompt_input.setFocus()
-            self.terminal_prompt_input.selectAll()
-        else:
-            # Fallback only for incomplete initialization.
-            callback(default)
+        self.request_workspace_form(
+            title,
+            message,
+            [("value", message, default, password)],
+            lambda values: callback(values.get("value", "")),
+        )
 
     def _submit_terminal_prompt(self) -> None:
-        value = self.terminal_prompt_input.text()
-        callback = getattr(self, "terminal_prompt_callback", None)
-        self.terminal_prompt_panel.setVisible(False)
-        self.terminal_prompt_input.clear()
-        self.terminal_prompt_callback = None
-        if callback:
-            callback(value)
+        # Compatibility: old terminal prompt submit now delegates to workspace form.
+        self._submit_workspace_prompt()
 
     def _cancel_terminal_prompt(self) -> None:
-        self.terminal_prompt_panel.setVisible(False)
-        self.terminal_prompt_input.clear()
-        self.terminal_prompt_callback = None
-        self.append_log("已取消输入。")
+        # Compatibility: old terminal prompt cancel now delegates to workspace form.
+        self._cancel_workspace_prompt()
+
+    def _submit_workspace_prompt(self) -> None:
+        values = {key: edit.text() for key, edit in getattr(self, "workspace_prompt_fields", {}).items()}
+        callback = getattr(self, "workspace_prompt_callback", None)
+        self.workspace_overlay.setVisible(False)
+        self.workspace_stack.setCurrentWidget(self.workspace_content)
+        self._clear_workspace_prompt_form()
+        self.workspace_prompt_fields = {}
+        self.workspace_prompt_callback = None
+        if callback:
+            callback(values)
+
+    def _cancel_workspace_prompt(self) -> None:
+        if hasattr(self, "workspace_overlay"):
+            self.workspace_overlay.setVisible(False)
+            self.workspace_stack.setCurrentWidget(self.workspace_content)
+        self._clear_workspace_prompt_form()
+        self.workspace_prompt_fields = {}
+        self.workspace_prompt_callback = None
+        self.append_log("已返回，输入已取消。")
 
     def create_remote_repository(self) -> None:
-        def got_name(name: str) -> None:
-            name = name.strip()
+        def submitted(values: dict[str, str]) -> None:
+            name = values.get("name", "").strip()
+            visibility = values.get("visibility", "private").strip().lower() or "private"
             if not name:
+                self.append_log("创建远程仓库已取消：仓库名为空。")
                 return
-            def got_visibility(value: str) -> None:
-                visibility = value.strip().lower() or "private"
-                if visibility not in {"private", "public"}:
-                    self.append_log("仓库可见性只能输入 private 或 public。")
-                    return
-                self.run_external_command(["gh", "repo", "create", name, f"--{visibility}", "--source", ".", "--remote", "origin"])
-            self.request_terminal_text("创建 GitHub 远程仓库", "Visibility：输入 private 或 public", got_visibility, "private")
-        self.request_terminal_text("创建 GitHub 远程仓库", "仓库名（需要已安装并登录 gh CLI）：", got_name)
+            if visibility not in {"private", "public"}:
+                self.append_log("仓库可见性只能输入 private 或 public。")
+                return
+            self.run_external_command(["gh", "repo", "create", name, f"--{visibility}", "--source", ".", "--remote", "origin"])
+        self.request_workspace_form(
+            "创建 GitHub 远程仓库",
+            "需要已安装并登录 gh CLI。所有参数一次性输入。",
+            [("name", "仓库名", "", False), ("visibility", "Visibility", "private", False)],
+            submitted,
+        )
 
     def set_git_user_name(self) -> None:
         self.request_terminal_text(
@@ -753,24 +909,90 @@ class MainWindow(QMainWindow):
         )
 
     def push_current_branch_upstream_from_menu(self) -> None:
-        def got_remote(remote: str) -> None:
-            remote = remote.strip() or "origin"
-            branch = self.runner.run(["branch", "--show-current"]).stdout.strip()
-            if branch:
-                self.run_git_command(["push", "-u", remote, branch], callback=lambda _: self.refresh_all(), timeout=300)
-            else:
-                self.request_terminal_text(
-                    "Push -u",
-                    "当前分支名：",
-                    lambda name: self.run_git_command(["push", "-u", remote, name.strip()], callback=lambda _: self.refresh_all(), timeout=300) if name.strip() else None,
-                )
-        self.request_terminal_text("Push -u", "remote：", got_remote, "origin")
+        current = self.runner.run(["branch", "--show-current"]).stdout.strip()
+        def submitted(values: dict[str, str]) -> None:
+            remote = values.get("remote", "origin").strip() or "origin"
+            branch = values.get("branch", current).strip()
+            if not branch:
+                self.append_log("Push -u 已取消：缺少分支名。")
+                return
+            self.run_git_command(["push", "-u", remote, branch], callback=lambda _: self.refresh_all(), timeout=300)
+        self.request_workspace_form(
+            "Push -u",
+            "一次性输入 remote 和 branch。",
+            [("remote", "remote", "origin", False), ("branch", "branch", current, False)],
+            submitted,
+        )
 
     def create_tag_from_menu(self) -> None:
-        self.request_terminal_text(
+        def submitted(values: dict[str, str]) -> None:
+            tag = values.get("tag", "").strip()
+            message = values.get("message", "").strip() or tag
+            if tag:
+                self.run_git_command(["tag", "-a", tag, "-m", message], callback=lambda _: self.refresh_all())
+        self.request_workspace_form(
             "创建标签",
-            "标签名：",
-            lambda tag: self.run_git_command(["tag", "-a", tag.strip(), "-m", tag.strip()], callback=lambda _: self.refresh_all()) if tag.strip() else None,
+            "一次性输入标签名和标签信息。",
+            [("tag", "标签名", "", False), ("message", "标签信息", "", False)],
+            submitted,
+        )
+
+    def worktree_add_from_menu(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            path = values.get("path", "").strip()
+            ref = values.get("ref", "").strip()
+            if not path:
+                self.append_log("Worktree Add 已取消：缺少路径。")
+                return
+            self.run_git_command(["worktree", "add", path] + ([ref] if ref else []), callback=lambda _: self.refresh_all(), timeout=300)
+        self.request_workspace_form(
+            "Worktree Add",
+            "一次性输入 worktree 路径和可选 ref。",
+            [("path", "worktree 路径", "", False), ("ref", "分支 / commit / ref", "", False)],
+            submitted,
+        )
+
+    def worktree_remove_from_menu(self) -> None:
+        self.request_terminal_text(
+            "Worktree Remove",
+            "要移除的 worktree 路径：",
+            lambda path: self.run_git_command(["worktree", "remove", path.strip()], callback=lambda _: self.refresh_all(), timeout=300) if path.strip() else None,
+        )
+
+    def submodule_add_from_menu(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            url = values.get("url", "").strip()
+            path = values.get("path", "").strip()
+            if not url:
+                self.append_log("Submodule Add 已取消：缺少 URL。")
+                return
+            self.run_git_command(["submodule", "add", url] + ([path] if path else []), callback=lambda _: self.refresh_all(), timeout=900)
+        self.request_workspace_form(
+            "Submodule Add",
+            "一次性输入子模块 URL 和可选本地路径。",
+            [("url", "子模块 URL", "", False), ("path", "本地路径", "", False)],
+            submitted,
+        )
+
+    def lfs_track_from_menu(self) -> None:
+        self.request_terminal_text(
+            "Git LFS Track",
+            "匹配模式，例如 *.psd / assets/**：",
+            lambda pattern: self.run_git_command(["lfs", "track", pattern.strip()], callback=lambda _: self.refresh_all(), timeout=300) if pattern.strip() else None,
+        )
+
+    def bisect_good_from_menu(self) -> None:
+        self.request_terminal_text(
+            "Bisect Good",
+            "good commit / ref（可空）：",
+            lambda ref: self.run_git_command(["bisect", "good"] + ([ref.strip()] if ref.strip() else []), callback=self.show_result_in_log),
+        )
+
+    def bisect_bad_from_menu(self) -> None:
+        self.request_terminal_text(
+            "Bisect Bad",
+            "bad commit / ref（可空）：",
+            lambda ref: self.run_git_command(["bisect", "bad"] + ([ref.strip()] if ref.strip() else []), callback=self.show_result_in_log),
         )
 
     def _populate_navigator(self) -> None:
@@ -827,18 +1049,14 @@ class MainWindow(QMainWindow):
         self.diff_view.setPlaceholderText("选择文件后显示 git diff / git diff --staged")
         layout.addWidget(self.diff_view, 3)
 
-        commit_box = QGroupBox("Commit")
-        commit_layout = QHBoxLayout(commit_box)
-        self.commit_message = QLineEdit()
-        self.commit_message.setPlaceholderText("提交信息，例如 feat(auth): add login")
-        commit_layout.addWidget(self.commit_message, 1)
-        commit_button = QPushButton("git commit -m")
+        commit_actions = QGridLayout()
+        commit_button = QPushButton("Commit...")
         commit_button.clicked.connect(self.commit_changes)
         amend_button = QPushButton("Amend --no-edit")
         amend_button.clicked.connect(lambda: self.run_git_command(["commit", "--amend", "--no-edit"], callback=lambda _: self.refresh_all()))
-        commit_layout.addWidget(commit_button)
-        commit_layout.addWidget(amend_button)
-        layout.addWidget(commit_box)
+        commit_actions.addWidget(commit_button, 0, 0)
+        commit_actions.addWidget(amend_button, 0, 1)
+        layout.addLayout(commit_actions)
 
         for widget in (self.changed_list, self.staged_list, self.untracked_list):
             widget.currentItemChanged.connect(lambda *_: self.show_selected_diff())
@@ -1097,7 +1315,10 @@ class MainWindow(QMainWindow):
         for index, (text, args) in enumerate([
             ("config --list --show-origin", ["config", "--list", "--show-origin"]),
             ("submodule status", ["submodule", "status", "--recursive"]),
+            ("submodule update", ["submodule", "update", "--init", "--recursive"]),
             ("lfs status", ["lfs", "status"]),
+            ("worktree list", ["worktree", "list"]),
+            ("bisect log", ["bisect", "log"]),
             ("hooks path", ["config", "--get", "core.hooksPath"]),
             ("ignored files", ["status", "--ignored", "-s"]),
         ]):
@@ -1220,38 +1441,17 @@ class MainWindow(QMainWindow):
     def _build_log_bar(self) -> None:
         self.log_bar = QWidget()
         self.log_bar.setObjectName("terminalPage")
-        self.log_bar.setMinimumHeight(60)
+        self.log_bar.setMinimumHeight(0)
         self.log_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        layout = QVBoxLayout(self.log_bar)
+
+        self.terminal_stack = QStackedLayout(self.log_bar)
+        self.terminal_stack.setContentsMargins(0, 0, 0, 0)
+        self.terminal_stack.setSpacing(0)
+
+        self.terminal_content = QWidget()
+        layout = QVBoxLayout(self.terminal_content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
-        self.terminal_prompt_panel = QFrame()
-        self.terminal_prompt_panel.setObjectName("terminalPromptPanel")
-        self.terminal_prompt_panel.setVisible(False)
-        prompt_panel_layout = QGridLayout(self.terminal_prompt_panel)
-        prompt_panel_layout.setContentsMargins(10, 8, 10, 8)
-        prompt_panel_layout.setHorizontalSpacing(8)
-        prompt_panel_layout.setVerticalSpacing(6)
-        self.terminal_prompt_title = QLabel("")
-        self.terminal_prompt_title.setObjectName("terminalPromptTitle")
-        self.terminal_prompt_message = QLabel("")
-        self.terminal_prompt_message.setWordWrap(True)
-        self.terminal_prompt_input = QLineEdit()
-        self.terminal_prompt_input.setObjectName("terminalInput")
-        self.terminal_prompt_ok = QPushButton("OK")
-        self.terminal_prompt_ok.setObjectName("runButton")
-        self.terminal_prompt_cancel = QPushButton("Cancel")
-        self.terminal_prompt_cancel.setObjectName("panelAction")
-        self.terminal_prompt_input.returnPressed.connect(self._submit_terminal_prompt)
-        self.terminal_prompt_ok.clicked.connect(self._submit_terminal_prompt)
-        self.terminal_prompt_cancel.clicked.connect(self._cancel_terminal_prompt)
-        prompt_panel_layout.addWidget(self.terminal_prompt_title, 0, 0, 1, 4)
-        prompt_panel_layout.addWidget(self.terminal_prompt_message, 1, 0, 1, 4)
-        prompt_panel_layout.addWidget(self.terminal_prompt_input, 2, 0, 1, 2)
-        prompt_panel_layout.addWidget(self.terminal_prompt_ok, 2, 2)
-        prompt_panel_layout.addWidget(self.terminal_prompt_cancel, 2, 3)
-        layout.addWidget(self.terminal_prompt_panel)
 
         self.command_log = QPlainTextEdit()
         self.command_log.setObjectName("terminalOutput")
@@ -1277,7 +1477,7 @@ class MainWindow(QMainWindow):
         run_btn.clicked.connect(self.run_raw_command)
         self.terminal_max_btn = QPushButton("▣")
         self.terminal_max_btn.setObjectName("panelAction")
-        self.terminal_max_btn.setToolTip("展开终端占领整个工作区域 / Restore")
+        self.terminal_max_btn.setToolTip("放大/缩小终端")
         self.terminal_max_btn.clicked.connect(self.toggle_bottom_maximized)
         self.terminal_hide_btn = QPushButton("⌄")
         self.terminal_hide_btn.setObjectName("panelAction")
@@ -1294,6 +1494,61 @@ class MainWindow(QMainWindow):
         input_layout.addWidget(clear_btn)
         layout.addWidget(input_bar)
 
+        self.terminal_prompt_overlay = QFrame()
+        self.terminal_prompt_overlay.setObjectName("terminalPromptOverlay")
+        overlay = QVBoxLayout(self.terminal_prompt_overlay)
+        overlay.setContentsMargins(10, 10, 10, 10)
+        overlay.setSpacing(8)
+
+        top_row = QHBoxLayout()
+        self.terminal_prompt_back = QPushButton("← 返回")
+        self.terminal_prompt_back.setObjectName("terminalPromptBackButton")
+        self.terminal_prompt_back.setToolTip("关闭输入提示并恢复终端")
+        self.terminal_prompt_back.setMinimumWidth(82)
+        self.terminal_prompt_back.setFixedHeight(30)
+        self.terminal_prompt_back.clicked.connect(self._cancel_terminal_prompt)
+        top_row.addWidget(self.terminal_prompt_back, 0, Qt.AlignmentFlag.AlignLeft)
+        top_row.addStretch(1)
+        overlay.addLayout(top_row)
+
+        card = QFrame()
+        card.setObjectName("terminalPromptCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 14, 16, 14)
+        card_layout.setSpacing(10)
+        self.terminal_prompt_title = QLabel("")
+        self.terminal_prompt_title.setObjectName("terminalPromptTitle")
+        self.terminal_prompt_message = QLabel("")
+        self.terminal_prompt_message.setObjectName("terminalPromptMessage")
+        self.terminal_prompt_message.setWordWrap(True)
+        self.terminal_prompt_input = QLineEdit()
+        self.terminal_prompt_input.setObjectName("terminalInput")
+        self.terminal_prompt_input.returnPressed.connect(self._submit_terminal_prompt)
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.terminal_prompt_cancel = QPushButton("取消")
+        self.terminal_prompt_cancel.setObjectName("terminalPromptCancelButton")
+        self.terminal_prompt_cancel.setMinimumWidth(82)
+        self.terminal_prompt_cancel.setFixedHeight(30)
+        self.terminal_prompt_cancel.clicked.connect(self._cancel_terminal_prompt)
+        self.terminal_prompt_ok = QPushButton("确定")
+        self.terminal_prompt_ok.setObjectName("terminalPromptOkButton")
+        self.terminal_prompt_ok.setMinimumWidth(82)
+        self.terminal_prompt_ok.setFixedHeight(30)
+        self.terminal_prompt_ok.clicked.connect(self._submit_terminal_prompt)
+        button_row.addWidget(self.terminal_prompt_cancel)
+        button_row.addWidget(self.terminal_prompt_ok)
+        card_layout.addWidget(self.terminal_prompt_title)
+        card_layout.addWidget(self.terminal_prompt_message)
+        card_layout.addWidget(self.terminal_prompt_input)
+        card_layout.addLayout(button_row)
+        overlay.addWidget(card)
+        overlay.addStretch(1)
+
+        self.terminal_stack.addWidget(self.terminal_content)
+        self.terminal_stack.addWidget(self.terminal_prompt_overlay)
+        self.terminal_stack.setCurrentWidget(self.terminal_content)
+
     def _compact_ui_controls(self) -> None:
         """Let the VS Code-like splitters win over verbose control rows.
 
@@ -1303,7 +1558,7 @@ class MainWindow(QMainWindow):
         very small widths, but the user can freely resize panes.
         """
         for button in self.findChildren(QPushButton):
-            if button.objectName() == "CollapseButton":
+            if button.objectName() in {"CollapseButton", "terminalPromptBackButton", "terminalPromptCancelButton", "terminalPromptOkButton", "workspacePromptBackButton", "workspacePromptCancelButton", "workspacePromptOkButton"}:
                 continue
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setMinimumWidth(0)
@@ -1311,6 +1566,10 @@ class MainWindow(QMainWindow):
             if button.text() and not button.toolTip():
                 button.setToolTip(button.text())
         for line_edit in self.findChildren(QLineEdit):
+            if line_edit.objectName() == "workspacePromptInput":
+                line_edit.setMinimumWidth(260)
+                line_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                continue
             line_edit.setMinimumWidth(0)
             line_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         for combo in self.findChildren(QComboBox):
@@ -1526,20 +1785,21 @@ class MainWindow(QMainWindow):
         self.run_git_command(["init"], callback=lambda _: self.refresh_all())
 
     def clone_repository(self) -> None:
-        def got_url(url: str) -> None:
-            url = url.strip()
-            if not url:
+        def submitted(values: dict[str, str]) -> None:
+            url = values.get("url", "").strip()
+            dest = values.get("dest", "").strip()
+            if not url or not dest:
+                self.append_log("Clone 已取消：缺少远程 URL 或目标父目录。")
                 return
-            def got_dest(dest: str) -> None:
-                dest = dest.strip()
-                if not dest:
-                    self.append_log("Clone 已取消：缺少目标目录。")
-                    return
-                parent = Path(dest)
-                self.runner.repo_path = parent
-                self.run_git_command(["clone", url], callback=lambda r: self._after_clone(r, parent), timeout=900)
-            self.request_terminal_text("Clone 远程仓库", "目标父目录：", got_dest, str(Path.cwd()))
-        self.request_terminal_text("Clone 远程仓库", "远程 URL：", got_url)
+            parent = Path(dest)
+            self.runner.repo_path = parent
+            self.run_git_command(["clone", url], callback=lambda r: self._after_clone(r, parent), timeout=900)
+        self.request_workspace_form(
+            "Clone 远程仓库",
+            "一次性输入远程 URL 和目标父目录。",
+            [("url", "远程 URL", "", False), ("dest", "目标父目录", str(Path.cwd()), False)],
+            submitted,
+        )
 
     def _after_clone(self, result: GitResult, parent: Path) -> None:
         if result.ok:
@@ -1637,11 +1897,11 @@ class MainWindow(QMainWindow):
         self.diff_view.setPlainText(result.output or "(no diff)")
 
     def commit_changes(self) -> None:
-        msg = self.commit_message.text().strip()
-        if not msg:
-            QMessageBox.warning(self, "缺少提交信息", "请输入 commit message。")
-            return
-        self.run_git_command(["commit", "-m", msg], callback=lambda _: self.refresh_all())
+        self.request_terminal_text(
+            "Commit",
+            "请输入 commit message：",
+            lambda msg: self.run_git_command(["commit", "-m", msg.strip()], callback=lambda _: self.refresh_all()) if msg.strip() else self.append_log("Commit 已取消：提交信息为空。"),
+        )
 
     # ------------------------------------------------------------------
     # History and commit graph
@@ -1903,16 +2163,19 @@ class MainWindow(QMainWindow):
         return item.text(0) if item else None
 
     def add_remote(self) -> None:
-        def got_name(name: str) -> None:
-            name = name.strip()
-            if not name:
+        def submitted(values: dict[str, str]) -> None:
+            name = values.get("name", "origin").strip() or "origin"
+            url = values.get("url", "").strip()
+            if not url:
+                self.append_log("Add Remote 已取消：URL 为空。")
                 return
-            self.request_terminal_text(
-                "Add Remote",
-                "URL：",
-                lambda url: self.run_git_command(["remote", "add", name, url.strip()], callback=lambda _: self.refresh_all()) if url.strip() else None,
-            )
-        self.request_terminal_text("Add Remote", "remote 名称：", got_name, "origin")
+            self.run_git_command(["remote", "add", name, url], callback=lambda _: self.refresh_all())
+        self.request_workspace_form(
+            "Add Remote",
+            "一次性输入 remote 名称和 URL。",
+            [("name", "remote 名称", "origin", False), ("url", "URL", "", False)],
+            submitted,
+        )
 
     def remove_remote(self) -> None:
         remote = self._selected_remote()
@@ -1920,13 +2183,19 @@ class MainWindow(QMainWindow):
             self.run_git_command(["remote", "remove", remote], callback=lambda _: self.refresh_all())
 
     def set_remote_url(self) -> None:
-        remote = self._selected_remote()
-        if not remote:
-            return
-        self.request_terminal_text(
+        selected = self._selected_remote() or "origin"
+        def submitted(values: dict[str, str]) -> None:
+            remote = values.get("remote", selected).strip() or selected
+            url = values.get("url", "").strip()
+            if not url:
+                self.append_log("Set Remote URL 已取消：URL 为空。")
+                return
+            self.run_git_command(["remote", "set-url", remote, url], callback=lambda _: self.refresh_all())
+        self.request_workspace_form(
             "Set Remote URL",
-            f"{remote} URL：",
-            lambda url: self.run_git_command(["remote", "set-url", remote, url.strip()], callback=lambda _: self.refresh_all()) if url.strip() else None,
+            "一次性输入 remote 名称和新的 URL。",
+            [("remote", "remote 名称", selected, False), ("url", "URL", "", False)],
+            submitted,
         )
 
     def fetch_remote(self) -> None:
@@ -1934,14 +2203,19 @@ class MainWindow(QMainWindow):
         self.run_git_command(["fetch", remote], callback=lambda _: self.refresh_all(), timeout=300)
 
     def delete_remote_branch(self) -> None:
-        def got_remote(remote: str) -> None:
-            remote = remote.strip() or "origin"
-            self.request_terminal_text(
-                "Delete Remote Branch",
-                "远程分支名：",
-                lambda branch: self.run_git_command(["push", remote, "--delete", branch.strip()], callback=lambda _: self.refresh_all(), timeout=300) if branch.strip() else None,
-            )
-        self.request_terminal_text("Delete Remote Branch", "remote：", got_remote, "origin")
+        def submitted(values: dict[str, str]) -> None:
+            remote = values.get("remote", "origin").strip() or "origin"
+            branch = values.get("branch", "").strip()
+            if not branch:
+                self.append_log("Delete Remote Branch 已取消：缺少远程分支名。")
+                return
+            self.run_git_command(["push", remote, "--delete", branch], callback=lambda _: self.refresh_all(), timeout=300)
+        self.request_workspace_form(
+            "Delete Remote Branch",
+            "一次性输入 remote 和远程分支名。",
+            [("remote", "remote", "origin", False), ("branch", "远程分支名", "", False)],
+            submitted,
+        )
 
     # ------------------------------------------------------------------
     # Tags and Stash
