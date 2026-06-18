@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 import os
 import shlex
 import shutil
@@ -125,8 +126,8 @@ class MainWindow(QMainWindow):
         self._last_left_width = 220
         self._last_right_width = 260
         self._last_bottom_height = 190
-        self._initial_center_sizes = [400, 140]
-        self._initial_horizontal_sizes = [200, 640, 200]
+        self._initial_center_sizes = [430, 130]
+        self._initial_horizontal_sizes = [220, 580, 220]
 
         self._build_actions()
         self._build_ui()
@@ -224,6 +225,7 @@ class MainWindow(QMainWindow):
         changes_menu.addAction("git add -A / 添加全部", lambda: self.run_git_command(["add", "-A"], callback=lambda _: self.refresh_all()))
         changes_menu.addAction("Unstage All", lambda: self.run_git_command(["restore", "--staged", "."], callback=lambda _: self.refresh_all()))
         changes_menu.addAction("Add All + Commit...", self.commit_changes)
+        changes_menu.addAction("Commit Only...", self.commit_staged_only)
         changes_menu.addAction("Amend --no-edit", lambda: self.run_git_command(["commit", "--amend", "--no-edit"], callback=lambda _: self.refresh_all()))
         changes_menu.addAction("Diff", lambda: self.run_git_command(["diff"], callback=self.show_result_in_log))
         changes_menu.addAction("Diff --staged", lambda: self.run_git_command(["diff", "--staged"], callback=self.show_result_in_log))
@@ -408,11 +410,17 @@ class MainWindow(QMainWindow):
         workspace_layout.setSpacing(0)
         self.status_bar_label = QLabel("Repo: - | Branch: - | HEAD: - | Remote: - | Ahead: 0 | Behind: 0 | Dirty: 0 | Mode: -")
         self.status_bar_label.setObjectName("TopStatusLabel")
+        self.status_bar_label.setMinimumWidth(0)
         self.status_bar_label.setMinimumHeight(26)
+        self.status_bar_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.status_bar_label.setWordWrap(False)
         workspace_layout.addWidget(self.status_bar_label)
         self.repo_target_label = QLabel("提交目标: - | Push URL: - | Local: -")
         self.repo_target_label.setObjectName("RepoTargetLabel")
+        self.repo_target_label.setMinimumWidth(0)
         self.repo_target_label.setMinimumHeight(26)
+        self.repo_target_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.repo_target_label.setWordWrap(False)
         self.repo_target_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         workspace_layout.addWidget(self.repo_target_label)
         self.tabs = QTabWidget()
@@ -536,6 +544,7 @@ class MainWindow(QMainWindow):
         for index, button in enumerate(self.activity_bar.buttons):
             button.clicked.connect(activity_handlers[index])
         self.activity_bar.settings_button.clicked.connect(self.show_settings_menu)
+        self.activity_bar.account_button.clicked.connect(self.show_user_accounts)
 
         self._build_workspace_tab()
         self._build_history_tab()
@@ -608,6 +617,7 @@ class MainWindow(QMainWindow):
             ("Clean", self.clean_selected_untracked, False),
             ("Diff", self.show_selected_diff, False),
             ("Add All + Commit...", self.commit_changes, True),
+            ("Commit Only...", self.commit_staged_only, True),
             ("Amend --no-edit", lambda: self.run_git_command(["commit", "--amend", "--no-edit"], callback=lambda _: self.refresh_all()), True),
         ])
         add_group("History / Graph", [
@@ -627,6 +637,8 @@ class MainWindow(QMainWindow):
             ("Delete", self.delete_branch, False),
             ("Merge...", self.merge_branch_from_menu, False),
             ("Rebase...", self.rebase_branch_from_menu, False),
+            ("Merge To...", self.merge_to_target_from_menu, False),
+            ("Rebase To...", self.rebase_to_target_from_menu, False),
             ("Push -u...", self.push_current_branch_upstream_from_menu, True),
             ("Create from Commit...", self.branch_from_selected_commit, True),
         ])
@@ -641,12 +653,17 @@ class MainWindow(QMainWindow):
             ("Push", lambda: self.run_git_command(["push"], callback=lambda _: self.refresh_all(), timeout=300), False),
             ("Push Tags", lambda: self.run_git_command(["push", "--tags"], callback=lambda _: self.refresh_all(), timeout=300), False),
             ("Delete Remote Branch...", self.delete_remote_branch, True),
+            ("SSH Info", self.show_ssh_remote_info, False),
+            ("Generate SSH Key...", self.generate_ssh_key_from_menu, True),
+            ("ssh-add Key...", self.ssh_add_key_from_menu, True),
+            ("Test GitHub SSH", lambda: self.run_external_command(["ssh", "-T", "git@github.com"]), True),
+            ("Credential Helper...", self.configure_credential_helper, True),
         ])
         add_group("Tags / Stash", [
             ("Refresh", self.refresh_tags_stash, False),
             ("New Tag...", self.create_tag_from_menu, False),
-            ("Push Tag...", self.push_selected_tag, False),
-            ("Delete Tag", self.delete_selected_tag, False),
+            ("Push Tag...", self.push_tag, False),
+            ("Delete Tag", self.delete_tag, False),
             ("Stash -u", self.stash_push, False),
             ("Stash Pop", self.stash_pop, False),
             ("Stash Apply", self.stash_apply, False),
@@ -665,6 +682,10 @@ class MainWindow(QMainWindow):
             ("LFS Track...", self.lfs_track_from_menu, True),
         ])
         add_group("Platform", [
+            ("User Page", self.show_user_accounts, False),
+            ("Set Name", self.set_git_user_name, False),
+            ("Set Email", self.set_git_user_email, False),
+            ("Refresh Status", self.refresh_platform_statuses, True),
             ("gh auth", lambda: self.run_external_command(["gh", "auth", "status"]), False),
             ("gh repos", lambda: self.run_external_command(["gh", "repo", "list", "--limit", "50"]), False),
             ("gh PRs", lambda: self.run_external_command(["gh", "pr", "list"]), False),
@@ -729,6 +750,7 @@ class MainWindow(QMainWindow):
             ("git add -A / 添加全部", lambda: self.run_git_command(["add", "-A"], callback=lambda _: self.refresh_all())),
             ("Unstage All", lambda: self.run_git_command(["restore", "--staged", "."], callback=lambda _: self.refresh_all())),
             ("Add All + Commit...", self.commit_changes),
+            ("Commit Only...", self.commit_staged_only),
             ("Diff", lambda: self.run_git_command(["diff"], callback=self.show_result_in_log)),
             ("Diff --staged", lambda: self.run_git_command(["diff", "--staged"], callback=self.show_result_in_log)),
         ])
@@ -936,6 +958,27 @@ class MainWindow(QMainWindow):
         else:
             menu.exec(self.mapToGlobal(self.rect().center()))
 
+    def _field_suggestions(self, key: str, label: str) -> list[str]:
+        text = f"{key} {label}".lower()
+        if not self.runner.repo_path:
+            return []
+        try:
+            if any(word in text for word in ["branch", "分支", "target", "onto"]):
+                result = self.runner.run(["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"])
+                if result.ok:
+                    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            if any(word in text for word in ["tag", "version", "版本"]):
+                result = self.runner.run(["tag", "--list"])
+                if result.ok:
+                    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            if "remote" in text or "远程" in text:
+                result = self.runner.run(["remote"])
+                if result.ok:
+                    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        except Exception:
+            return []
+        return []
+
     def request_workspace_form(
         self,
         title: str,
@@ -953,11 +996,23 @@ class MainWindow(QMainWindow):
         self.workspace_prompt_fields = {}
         first_input = None
         for key, label, default, password in fields:
-            edit = QLineEdit()
-            edit.setObjectName("workspacePromptInput")
-            edit.setText(default)
-            edit.setEchoMode(QLineEdit.EchoMode.Password if password else QLineEdit.EchoMode.Normal)
-            edit.returnPressed.connect(self._submit_workspace_prompt)
+            suggestions = [] if password else self._field_suggestions(key, label)
+            if suggestions:
+                edit = QComboBox()
+                edit.setObjectName("workspacePromptInput")
+                edit.setEditable(True)
+                edit.addItems(suggestions)
+                if default:
+                    edit.setCurrentText(default)
+                edit.lineEdit().returnPressed.connect(self._submit_workspace_prompt)
+                edit.setMinimumHeight(34)
+            else:
+                edit = QLineEdit()
+                edit.setObjectName("workspacePromptInput")
+                edit.setText(default)
+                edit.setEchoMode(QLineEdit.EchoMode.Password if password else QLineEdit.EchoMode.Normal)
+                edit.returnPressed.connect(self._submit_workspace_prompt)
+                edit.setMinimumHeight(34)
             self.workspace_prompt_form.addRow(label, edit)
             self.workspace_prompt_fields[key] = edit
             if first_input is None:
@@ -967,7 +1022,10 @@ class MainWindow(QMainWindow):
         self.workspace_stack.setCurrentWidget(self.workspace_overlay)
         if first_input is not None:
             first_input.setFocus()
-            first_input.selectAll()
+            if hasattr(first_input, "selectAll"):
+                first_input.selectAll()
+            elif hasattr(first_input, "lineEdit") and first_input.lineEdit() is not None:
+                first_input.lineEdit().selectAll()
 
     def _clear_workspace_prompt_form(self) -> None:
         if not hasattr(self, "workspace_prompt_form"):
@@ -999,7 +1057,12 @@ class MainWindow(QMainWindow):
         self._cancel_workspace_prompt()
 
     def _submit_workspace_prompt(self) -> None:
-        values = {key: edit.text() for key, edit in getattr(self, "workspace_prompt_fields", {}).items()}
+        values = {}
+        for key, edit in getattr(self, "workspace_prompt_fields", {}).items():
+            if hasattr(edit, "currentText"):
+                values[key] = edit.currentText()
+            else:
+                values[key] = edit.text()
         callback = getattr(self, "workspace_prompt_callback", None)
         self.workspace_overlay.setVisible(False)
         self.workspace_stack.setCurrentWidget(self.workspace_content)
@@ -1080,6 +1143,22 @@ class MainWindow(QMainWindow):
             "Rebase",
             "当前分支 rebase 到：",
             lambda name: self.run_git_command(["rebase", name.strip()], callback=lambda _: self.refresh_all()) if name.strip() else None,
+        )
+
+    def merge_to_target_from_menu(self) -> None:
+        self.request_workspace_form(
+            "Merge To",
+            "选择要合并进当前分支的目标分支 / commit。输入框支持下拉选择已有本地/远程分支。",
+            [("branch", "目标分支 / commit", "", False)],
+            lambda values: self.run_git_command(["merge", values.get("branch", "").strip()], callback=lambda _: self.refresh_all()) if values.get("branch", "").strip() else None,
+        )
+
+    def rebase_to_target_from_menu(self) -> None:
+        self.request_workspace_form(
+            "Rebase To",
+            "选择当前分支要 rebase 到的目标分支 / commit。输入框支持下拉选择已有本地/远程分支。",
+            [("branch", "目标分支 / commit", "", False)],
+            lambda values: self.run_git_command(["rebase", values.get("branch", "").strip()], callback=lambda _: self.refresh_all()) if values.get("branch", "").strip() else None,
         )
 
     def cherry_pick_from_menu(self) -> None:
@@ -1235,6 +1314,17 @@ class MainWindow(QMainWindow):
     def _build_workspace_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+
+        workspace_tabs = QTabWidget()
+        workspace_tabs.setDocumentMode(True)
+        workspace_tabs.setTabsClosable(False)
+
+        status_page = QWidget()
+        status_layout = QVBoxLayout(status_page)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(0)
         lists = QSplitter(Qt.Orientation.Horizontal)
         lists.setChildrenCollapsible(True)
         lists.setHandleWidth(1)
@@ -1249,12 +1339,22 @@ class MainWindow(QMainWindow):
             box_layout.setContentsMargins(6, 8, 6, 6)
             box_layout.addWidget(widget)
             lists.addWidget(box)
-        layout.addWidget(lists, 2)
+        lists.setSizes([1, 1, 1])
+        status_layout.addWidget(lists, 1)
+        workspace_tabs.addTab(status_page, "Status")
 
-        btns = QGridLayout()
-        btns.setContentsMargins(0, 0, 0, 0)
-        btns.setHorizontalSpacing(6)
-        btns.setVerticalSpacing(4)
+        diff_page = QWidget()
+        diff_layout = QVBoxLayout(diff_page)
+        diff_layout.setContentsMargins(0, 0, 0, 0)
+        self.diff_view = QPlainTextEdit()
+        self.diff_view.setReadOnly(True)
+        self.diff_view.setPlaceholderText("选择文件后显示 git diff / git diff --staged")
+        diff_layout.addWidget(self.diff_view, 1)
+        workspace_tabs.addTab(diff_page, "Diff")
+
+        # Hidden compatibility buttons. Actions are exposed in the right ACTIONS bar.
+        hidden_actions = QWidget()
+        hidden_layout = QGridLayout(hidden_actions)
         for index, (text, handler) in enumerate([
             ("git add selected", self.stage_selected),
             ("Unstage Selected", self.unstage_selected),
@@ -1265,25 +1365,15 @@ class MainWindow(QMainWindow):
             ("Diff", self.show_selected_diff),
             ("Open Folder", self.open_repo_folder),
             ("Refresh", self.refresh_all),
+            ("Add All + Commit...", self.commit_changes),
+            ("Commit Only...", self.commit_staged_only),
         ]):
             button = QPushButton(text)
             button.clicked.connect(handler)
-            btns.addWidget(button, index // 3, index % 3)
-        layout.addLayout(btns)
-
-        self.diff_view = QPlainTextEdit()
-        self.diff_view.setReadOnly(True)
-        self.diff_view.setPlaceholderText("选择文件后显示 git diff / git diff --staged")
-        layout.addWidget(self.diff_view, 3)
-
-        commit_actions = QGridLayout()
-        commit_button = QPushButton("Add All + Commit...")
-        commit_button.clicked.connect(self.commit_changes)
-        amend_button = QPushButton("Amend --no-edit")
-        amend_button.clicked.connect(lambda: self.run_git_command(["commit", "--amend", "--no-edit"], callback=lambda _: self.refresh_all()))
-        commit_actions.addWidget(commit_button, 0, 0)
-        commit_actions.addWidget(amend_button, 0, 1)
-        layout.addLayout(commit_actions)
+            hidden_layout.addWidget(button, index // 3, index % 3)
+        hidden_actions.hide()
+        layout.addWidget(workspace_tabs, 1)
+        layout.addWidget(hidden_actions)
 
         for widget in (self.changed_list, self.staged_list, self.untracked_list):
             widget.currentItemChanged.connect(lambda *_: self.show_selected_diff())
@@ -1294,13 +1384,15 @@ class MainWindow(QMainWindow):
     def _build_history_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
         self.history_tree = QTreeWidget()
         self.history_tree.setColumnCount(6)
         self.history_tree.setHeaderLabels(["Graph", "Hash", "Date", "Author", "Refs", "Message"])
         self.history_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.history_tree.customContextMenuRequested.connect(self._commit_context_menu)
         self.history_tree.itemClicked.connect(self.show_commit_details)
-        layout.addWidget(self.history_tree, 3)
+        layout.addWidget(self.history_tree, 8)
         buttons = QGridLayout()
         buttons.setHorizontalSpacing(6)
         buttons.setVerticalSpacing(4)
@@ -1379,25 +1471,30 @@ class MainWindow(QMainWindow):
         self.branch_graph_view.commitActivated.connect(self.graph_checkout_commit)
         self.branch_graph_view.commitContextRequested.connect(self.graph_commit_context_menu)
         graph_splitter.addWidget(self.branch_graph_view)
-        self.branch_graph_detail = QPlainTextEdit()
-        self.branch_graph_detail.setReadOnly(True)
-        self.branch_graph_detail.setPlaceholderText("鼠标悬浮或单击图节点后显示 commit 详情")
+        self.branch_graph_detail = QTreeWidget()
+        self.branch_graph_detail.setHeaderHidden(True)
+        self.branch_graph_detail.setMinimumWidth(260)
+        self.branch_graph_detail.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._set_branch_graph_detail_message("鼠标悬浮或单击图节点后显示 commit 详情")
         graph_splitter.addWidget(self.branch_graph_detail)
-        graph_splitter.setStretchFactor(0, 5)
+        graph_splitter.setChildrenCollapsible(False)
+        graph_splitter.setStretchFactor(0, 4)
         graph_splitter.setStretchFactor(1, 2)
-        graph_splitter.setSizes([780, 300])
+        graph_splitter.setSizes([620, 280])
         graph_layout.addWidget(graph_splitter, 1)
         self.branch_view_tabs.addTab(graph_page, "有向图")
 
-        self._add_scrollable_tab(page, "分支")
+        self.tabs.addTab(page, "分支")
 
     def _build_remote_tab(self) -> None:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
         self.remote_tree = QTreeWidget()
         self.remote_tree.setColumnCount(3)
         self.remote_tree.setHeaderLabels(["Remote", "Type", "URL"])
-        layout.addWidget(self.remote_tree, 1)
+        layout.addWidget(self.remote_tree, 8)
         row = QGridLayout()
         row.setHorizontalSpacing(6)
         row.setVerticalSpacing(4)
@@ -1417,23 +1514,32 @@ class MainWindow(QMainWindow):
         layout.addLayout(row)
         self.remote_output = QPlainTextEdit()
         self.remote_output.setReadOnly(True)
-        layout.addWidget(self.remote_output, 1)
+        layout.addWidget(self.remote_output, 2)
         self._add_scrollable_tab(page, "远程")
 
     def _build_tag_stash_tab(self) -> None:
         page = QWidget()
-        layout = QHBoxLayout(page)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.setTabsClosable(False)
 
-        tag_box = QGroupBox("Tags")
-        tag_layout = QVBoxLayout(tag_box)
+        tag_page = QWidget()
+        tag_layout = QVBoxLayout(tag_page)
+        tag_layout.setContentsMargins(6, 6, 6, 6)
+        tag_layout.setSpacing(6)
+        tag_tip = QLabel("Tags：用于版本发布或重要节点标记。操作按钮已移动到右侧 ACTIONS > Tags / Stash。")
+        tag_tip.setWordWrap(True)
+        tag_layout.addWidget(tag_tip)
         self.tag_list = QListWidget()
-        tag_layout.addWidget(self.tag_list)
+        tag_layout.addWidget(self.tag_list, 1)
         self.new_tag_name = QLineEdit()
         self.new_tag_name.setPlaceholderText("v1.0.0")
         tag_layout.addWidget(self.new_tag_name)
+        # Hidden central buttons keep old signal wiring available but actions live in right sidebar.
         tag_buttons = QGridLayout()
-        tag_buttons.setHorizontalSpacing(6)
-        tag_buttons.setVerticalSpacing(4)
         for index, (text, handler) in enumerate([
             ("Create", self.create_tag),
             ("Delete", self.delete_tag),
@@ -1444,18 +1550,21 @@ class MainWindow(QMainWindow):
             b.clicked.connect(handler)
             tag_buttons.addWidget(b, index // 2, index % 2)
         tag_layout.addLayout(tag_buttons)
-        layout.addWidget(tag_box)
+        tabs.addTab(tag_page, "Tags")
 
-        stash_box = QGroupBox("Stash")
-        stash_layout = QVBoxLayout(stash_box)
+        stash_page = QWidget()
+        stash_layout = QVBoxLayout(stash_page)
+        stash_layout.setContentsMargins(6, 6, 6, 6)
+        stash_layout.setSpacing(6)
+        stash_tip = QLabel("Stash：临时保存工作区改动。操作按钮已移动到右侧 ACTIONS > Tags / Stash。")
+        stash_tip.setWordWrap(True)
+        stash_layout.addWidget(stash_tip)
         self.stash_list = QListWidget()
-        stash_layout.addWidget(self.stash_list)
+        stash_layout.addWidget(self.stash_list, 1)
         self.stash_message = QLineEdit()
         self.stash_message.setPlaceholderText("stash message")
         stash_layout.addWidget(self.stash_message)
         stash_buttons = QGridLayout()
-        stash_buttons.setHorizontalSpacing(6)
-        stash_buttons.setVerticalSpacing(4)
         for index, (text, handler) in enumerate([
             ("Push -u", self.stash_push),
             ("Apply", self.stash_apply),
@@ -1467,7 +1576,9 @@ class MainWindow(QMainWindow):
             b.clicked.connect(handler)
             stash_buttons.addWidget(b, index // 3, index % 3)
         stash_layout.addLayout(stash_buttons)
-        layout.addWidget(stash_box)
+        tabs.addTab(stash_page, "Stash")
+
+        layout.addWidget(tabs, 1)
         self._add_scrollable_tab(page, "标签 / Stash")
 
     def _build_conflict_tab(self) -> None:
@@ -1625,10 +1736,33 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        platform_tabs = QTabWidget()
+        self.platform_tabs = QTabWidget()
+        platform_tabs = self.platform_tabs
         platform_tabs.setObjectName("platformTabs")
         platform_tabs.setDocumentMode(True)
         platform_tabs.setTabsClosable(False)
+
+        user_page = QWidget()
+        user_layout = QVBoxLayout(user_page)
+        user_tip = QLabel("用户与账号配置：这里集中展示 Git identity、credential helper，以及 GitHub/GitLab/Gitee 配置入口。")
+        user_tip.setWordWrap(True)
+        user_layout.addWidget(user_tip)
+        self.git_identity_status = QLabel("Git identity: 点击右侧 Refresh Status 或仓库刷新后检测。")
+        self.git_identity_status.setObjectName("ProviderStatusLabel")
+        self.git_identity_status.setWordWrap(True)
+        user_layout.addWidget(self.git_identity_status)
+        identity_box = QGroupBox("Git Identity")
+        identity_form = QFormLayout(identity_box)
+        self.git_user_name_input = QLineEdit()
+        self.git_user_email_input = QLineEdit()
+        identity_form.addRow("user.name", self.git_user_name_input)
+        identity_form.addRow("user.email", self.git_user_email_input)
+        user_layout.addWidget(identity_box)
+        helper = QLabel("配置按钮位于右侧 ACTIONS：设置 user.name / user.email、Refresh Status、Credential Helper、各平台登录检查。")
+        helper.setWordWrap(True)
+        user_layout.addWidget(helper)
+        user_layout.addStretch(1)
+        platform_tabs.addTab(user_page, "User")
 
         def add_command_grid(parent_layout: QVBoxLayout, title: str, entries: list[tuple[str, list[str] | Callable[[], None]]], columns: int = 3) -> None:
             box = QGroupBox(title)
@@ -1651,6 +1785,10 @@ class MainWindow(QMainWindow):
         github_tip = QLabel("GitHub 建议使用 gh CLI。初始化配置会调用 gh auth login / gh auth setup-git；仓库和协作功能通过 gh 命令执行。")
         github_tip.setWordWrap(True)
         github_layout.addWidget(github_tip)
+        self.github_status_label = QLabel("GitHub: 正在检测 gh 登录状态...")
+        self.github_status_label.setObjectName("ProviderStatusLabel")
+        self.github_status_label.setWordWrap(True)
+        github_layout.addWidget(self.github_status_label)
         add_command_grid(github_layout, "GitHub 初始化 / 账号", [
             ("检查 gh", ["gh", "--version"]),
             ("gh auth status", ["gh", "auth", "status"]),
@@ -1675,6 +1813,10 @@ class MainWindow(QMainWindow):
         gitlab_tip = QLabel("GitLab 建议使用 glab CLI。支持认证、项目列表、MR、Issue、Pipeline、Release 等常用入口。")
         gitlab_tip.setWordWrap(True)
         gitlab_layout.addWidget(gitlab_tip)
+        self.gitlab_status_label = QLabel("GitLab: 正在检测 glab 登录状态...")
+        self.gitlab_status_label.setObjectName("ProviderStatusLabel")
+        self.gitlab_status_label.setWordWrap(True)
+        gitlab_layout.addWidget(self.gitlab_status_label)
         add_command_grid(gitlab_layout, "GitLab 初始化 / 账号", [
             ("检查 glab", ["glab", "--version"]),
             ("glab auth status", ["glab", "auth", "status"]),
@@ -1698,6 +1840,10 @@ class MainWindow(QMainWindow):
         gitee_tip = QLabel("Gitee 支持 Token / 用户名配置。生产环境应接入系统 Keychain，本版本仅作为当前会话输入和命令透明测试入口。")
         gitee_tip.setWordWrap(True)
         gitee_layout.addWidget(gitee_tip)
+        self.gitee_status_label = QLabel("Gitee: 未配置 Token。请填写 Token 和用户/组织后点击右侧 Refresh Status 或 Gitee repos。")
+        self.gitee_status_label.setObjectName("ProviderStatusLabel")
+        self.gitee_status_label.setWordWrap(True)
+        gitee_layout.addWidget(self.gitee_status_label)
         gitee_box = QGroupBox("Gitee 初始化配置")
         gitee_form = QFormLayout(gitee_box)
         self.gitee_token = QLineEdit()
@@ -1747,6 +1893,60 @@ class MainWindow(QMainWindow):
         self.platform_output.setReadOnly(True)
         layout.addWidget(self.platform_output, 1)
         self._add_scrollable_tab(page, "平台")
+        self.refresh_platform_statuses()
+
+    def refresh_platform_statuses(self) -> None:
+        def set_label(name: str, text: str, ok: bool | None = None) -> None:
+            label = getattr(self, name, None)
+            if label is not None:
+                prefix = "✓ " if ok is True else ("⚠ " if ok is False else "ℹ ")
+                label.setText(prefix + text)
+
+        if shutil.which("gh"):
+            try:
+                result = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8)
+                if result.returncode == 0:
+                    detail = (result.stdout or result.stderr).strip().splitlines()[0:3]
+                    set_label("github_status_label", "GitHub 已登录：" + " | ".join(detail), True)
+                else:
+                    set_label("github_status_label", "GitHub 未登录。点击右侧 gh auth 或在终端执行：gh auth login，然后执行 gh auth setup-git。", False)
+            except Exception as exc:
+                set_label("github_status_label", f"GitHub 状态检测失败：{exc}", False)
+        else:
+            set_label("github_status_label", "未检测到 gh CLI。请安装 GitHub CLI 后执行：gh auth login。", False)
+
+        if shutil.which("glab"):
+            try:
+                result = subprocess.run(["glab", "auth", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8)
+                if result.returncode == 0:
+                    detail = (result.stdout or result.stderr).strip().splitlines()[0:3]
+                    set_label("gitlab_status_label", "GitLab 已登录：" + " | ".join(detail), True)
+                else:
+                    set_label("gitlab_status_label", "GitLab 未登录。点击右侧 glab auth 或在终端执行：glab auth login。", False)
+            except Exception as exc:
+                set_label("gitlab_status_label", f"GitLab 状态检测失败：{exc}", False)
+        else:
+            set_label("gitlab_status_label", "未检测到 glab CLI。请安装 GitLab CLI 后执行：glab auth login。", False)
+
+        name_result = self.runner.run(["config", "--global", "user.name"], cwd=None)
+        email_result = self.runner.run(["config", "--global", "user.email"], cwd=None)
+        name = name_result.stdout.strip() if name_result.ok else ""
+        email = email_result.stdout.strip() if email_result.ok else ""
+        if hasattr(self, "git_user_name_input"):
+            self.git_user_name_input.setText(name)
+        if hasattr(self, "git_user_email_input"):
+            self.git_user_email_input.setText(email)
+        if name and email:
+            set_label("git_identity_status", f"Git identity 已配置：{name} <{email}>", True)
+        else:
+            set_label("git_identity_status", "Git identity 未完整配置。请设置 user.name 和 user.email。", False)
+
+        token = getattr(self, "gitee_token", None).text().strip() if hasattr(self, "gitee_token") else ""
+        user = getattr(self, "gitee_user", None).text().strip() if hasattr(self, "gitee_user") else ""
+        if token and user:
+            set_label("gitee_status_label", f"Gitee 已填写 Token 和用户/组织：{user}。点击 Gitee repos 检查仓库访问。", True)
+        else:
+            set_label("gitee_status_label", "Gitee 未配置。请填写 Personal Access Token 和用户/组织；Token 应优先保存到系统凭据管理器。", False)
 
     def _build_log_bar(self) -> None:
         self.log_bar = QWidget()
@@ -1800,10 +2000,10 @@ class MainWindow(QMainWindow):
         input_layout.addWidget(clear_btn)
         layout.addWidget(self.terminal_input_bar)
 
-        self.command_log = QPlainTextEdit()
+        self.command_log = QTextEdit()
         self.command_log.setObjectName("terminalOutput")
         self.command_log.setReadOnly(True)
-        self.command_log.setMaximumBlockCount(5000)
+        self.command_log.setAcceptRichText(True)
         self.command_log.setMinimumHeight(0)
         self.command_log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.command_log, 1)
@@ -2115,7 +2315,31 @@ class MainWindow(QMainWindow):
     def append_log(self, text: str) -> None:
         if not hasattr(self, "command_log"):
             return
-        self.command_log.appendPlainText(text.rstrip() + "\n")
+        raw = text.rstrip()
+        escaped = html.escape(raw).replace("\n", "<br>")
+        color = "#d4d4d4"
+        bg = "transparent"
+        weight = "400"
+        if raw.startswith("Will run") or raw.startswith("Will run shell") or raw.startswith("Will run external") or raw.startswith("$ "):
+            color = "#93c5fd"
+            bg = "rgba(59, 130, 246, 0.14)"
+            weight = "700"
+        elif raw.startswith("✓"):
+            color = "#86efac"
+            bg = "rgba(34, 197, 94, 0.14)"
+            weight = "700"
+        elif raw.startswith("✗"):
+            color = "#fca5a5"
+            bg = "rgba(239, 68, 68, 0.16)"
+            weight = "700"
+        elif raw.startswith("⚠") or "取消" in raw or "失败" in raw:
+            color = "#fde68a"
+            bg = "rgba(245, 158, 11, 0.14)"
+        self.command_log.append(
+            f"<div style='white-space:pre-wrap; color:{color}; background:{bg}; "
+            f"font-family:Consolas, monospace; font-weight:{weight}; "
+            f"padding:4px 6px; border-radius:4px; margin:2px 0;'>{escaped}</div>"
+        )
         self.command_log.moveCursor(QTextCursor.MoveOperation.End)
 
     def show_result_in_log(self, result: GitResult) -> None:
@@ -2123,6 +2347,45 @@ class MainWindow(QMainWindow):
             self.advanced_output.setPlainText(result.output)
         if hasattr(self, "all_commands_output"):
             self.all_commands_output.setPlainText(result.output)
+
+    # ------------------------------------------------------------------
+    # Remote credential helpers
+    # ------------------------------------------------------------------
+    def show_ssh_remote_info(self) -> None:
+        text = (
+            "Remote push 通常需要以下配置：\n"
+            "1. SSH key：推荐 ed25519，私钥保存在本机，公钥配置到 GitHub/GitLab/Gitee。\n"
+            "2. ssh-agent：私钥需要加入 agent，避免每次输入密码。\n"
+            "3. Remote URL：SSH 格式通常为 git@host:owner/repo.git；HTTPS 需要 credential helper 或 token。\n"
+            "4. credential.helper：HTTPS 推送建议使用系统凭据管理器。\n\n"
+            "右侧 ACTIONS > Remote 提供生成 key、ssh-add、SSH 测试和 credential helper 配置入口。"
+        )
+        self.remote_output.setPlainText(text if hasattr(self, "remote_output") else text)
+        self.append_log(text)
+
+    def generate_ssh_key_from_menu(self) -> None:
+        self.request_workspace_form(
+            "Generate SSH Key",
+            "生成 ed25519 SSH key。邮箱用于 key 注释，输出路径默认 ~/.ssh/id_ed25519。",
+            [("email", "Email / Comment", "", False), ("path", "Key path", str(Path.home() / ".ssh" / "id_ed25519"), False)],
+            lambda values: self.run_external_command(["ssh-keygen", "-t", "ed25519", "-C", values.get("email", "").strip() or "git-terminal", "-f", values.get("path", "").strip() or str(Path.home() / ".ssh" / "id_ed25519")]),
+        )
+
+    def ssh_add_key_from_menu(self) -> None:
+        self.request_workspace_form(
+            "ssh-add Key",
+            "把私钥加入 ssh-agent。Windows 下需要 OpenSSH Authentication Agent 已启动。",
+            [("path", "Private key path", str(Path.home() / ".ssh" / "id_ed25519"), False)],
+            lambda values: self.run_external_command(["ssh-add", values.get("path", "").strip() or str(Path.home() / ".ssh" / "id_ed25519")]),
+        )
+
+    def configure_credential_helper(self) -> None:
+        self.request_workspace_form(
+            "Credential Helper",
+            "配置 Git HTTPS 凭据助手。Windows 常用 manager-core / manager，macOS 常用 osxkeychain，Linux 常用 libsecret/cache。",
+            [("helper", "credential.helper", "manager-core", False)],
+            lambda values: self.run_git_command(["config", "--global", "credential.helper", values.get("helper", "").strip()], callback=self.show_result_in_log) if values.get("helper", "").strip() else None,
+        )
 
     # ------------------------------------------------------------------
     # Repository lifecycle
@@ -2207,6 +2470,8 @@ class MainWindow(QMainWindow):
         self.refresh_all()
 
     def refresh_all(self) -> None:
+        horizontal_sizes = self.horizontal_splitter.sizes() if hasattr(self, "horizontal_splitter") else []
+        center_sizes = self.center_splitter.sizes() if hasattr(self, "center_splitter") else []
         self.update_top_status()
         self.refresh_worktree()
         self.refresh_history(all_branches=True)
@@ -2215,16 +2480,25 @@ class MainWindow(QMainWindow):
         self.refresh_remotes()
         self.refresh_tags_stash()
         self.refresh_conflicts()
+        self._strip_workspace_buttons()
+        if horizontal_sizes and sum(horizontal_sizes) > 0 and hasattr(self, "horizontal_splitter"):
+            self.horizontal_splitter.setSizes(horizontal_sizes)
+        if center_sizes and sum(center_sizes) > 0 and hasattr(self, "center_splitter") and not getattr(self, "_bottom_maximized", False):
+            self.center_splitter.setSizes(center_sizes)
 
     def update_top_status(self) -> None:
         summary = self.runner.summarize()
         remote = ",".join(summary.remotes) if summary.remotes else "-"
-        self.status_bar_label.setText(
+        status_text = (
             f"仓库: {summary.name} | 分支: {summary.branch} | HEAD: {summary.head} | "
             f"远程: {remote} | Upstream: {summary.upstream} | Ahead: {summary.ahead} | "
             f"Behind: {summary.behind} | Dirty: {summary.dirty} | Mode: {summary.mode}"
         )
-        self.repo_target_label.setText(self._build_repo_target_text(summary))
+        target_text = self._build_repo_target_text(summary)
+        self.status_bar_label.setText(status_text)
+        self.status_bar_label.setToolTip(status_text)
+        self.repo_target_label.setText(target_text)
+        self.repo_target_label.setToolTip(target_text)
 
     def _build_repo_target_text(self, summary) -> str:
         if not self.runner.repo_path:
@@ -2309,7 +2583,31 @@ class MainWindow(QMainWindow):
             return
         args = ["diff", "--staged", "--", path] if area == "staged" else ["diff", "--", path]
         result = self.runner.run(args)
-        self.diff_view.setPlainText(result.output or "(no diff)")
+        self.diff_view.setPlainText(self._format_diff_output(result.output) if result.output else "(no diff)")
+
+    def _format_diff_output(self, diff: str) -> str:
+        sections: list[str] = []
+        current_file = ""
+        for line in diff.splitlines():
+            if line.startswith("diff --git "):
+                current_file = line
+                sections.append("\n" + "=" * 72)
+                sections.append("File")
+                sections.append(f"  {line}")
+            elif line.startswith("@@"):
+                sections.append("\nHunk")
+                sections.append(f"  {line}")
+            elif line.startswith("+++") or line.startswith("---"):
+                sections.append(f"  {line}")
+            elif line.startswith("+"):
+                sections.append(f"  ADD    {line}")
+            elif line.startswith("-"):
+                sections.append(f"  DEL    {line}")
+            elif line.startswith("index ") or line.startswith("new file") or line.startswith("deleted file"):
+                sections.append(f"  META   {line}")
+            else:
+                sections.append(f"         {line}")
+        return "\n".join(sections).lstrip()
 
     def commit_changes(self) -> None:
         def submitted(values: dict[str, str]) -> None:
@@ -2338,6 +2636,21 @@ class MainWindow(QMainWindow):
             self.refresh_all()
             return
         self.run_git_command(["commit", "-m", message], callback=lambda _: self.refresh_all())
+
+    def commit_staged_only(self) -> None:
+        def submitted(values: dict[str, str]) -> None:
+            message = values.get("message", "").strip()
+            if not message:
+                self.set_terminal_state("warning", "CANCEL")
+                self.append_log("Commit 已取消：提交信息为空。")
+                return
+            self.run_git_command(["commit", "-m", message], callback=lambda _: self.refresh_all())
+        self.request_workspace_form(
+            "Commit Only",
+            "只提交已经暂存的内容，不自动执行 git add。未暂存的新文件不会进入本次提交。",
+            [("message", "Commit message", "", False)],
+            submitted,
+        )
 
     # ------------------------------------------------------------------
     # History and commit graph
@@ -2454,8 +2767,8 @@ class MainWindow(QMainWindow):
             "--topo-order",
             "--all",
             "--parents",
-            "--date=short",
-            "--pretty=format:%H%x09%P%x09%h%x09%ad%x09%an%x09%D%x09%s",
+            "--date=format:%Y-%m-%d %H:%M",
+            "--pretty=format:%H%x09%P%x09%h%x09%cd%x09%an%x09%D%x09%s",
             "-n",
             "260",
         ])
@@ -2470,7 +2783,7 @@ class MainWindow(QMainWindow):
                 commits.append(GraphCommit(full_hash, parents, short_hash, date, author, refs, message))
         self.branch_graph_view.set_commits(commits)
         if not commits:
-            self.branch_graph_detail.setPlainText(result.output if not result.ok else "没有提交历史。")
+            self._set_branch_graph_detail_message(result.output if not result.ok else "没有提交历史。")
 
     def fit_branch_graph(self) -> None:
         if hasattr(self, "branch_graph_view") and self.branch_graph_view.scene() is not None:
@@ -2478,9 +2791,64 @@ class MainWindow(QMainWindow):
             if rect.isValid() and not rect.isEmpty():
                 self.branch_graph_view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
+    def _set_branch_graph_detail_message(self, message: str) -> None:
+        if not hasattr(self, "branch_graph_detail"):
+            return
+        self.branch_graph_detail.clear()
+        item = QTreeWidgetItem([message])
+        self.branch_graph_detail.addTopLevelItem(item)
+        item.setExpanded(True)
+
     def graph_commit_selected(self, commit_hash: str) -> None:
-        result = self.runner.run(["show", "--stat", "--pretty=fuller", commit_hash])
-        self.branch_graph_detail.setPlainText(result.output)
+        meta = self.runner.run([
+            "show",
+            "-s",
+            "--date=format:%Y-%m-%d %H:%M:%S %z",
+            "--pretty=format:%H%x1f%h%x1f%D%x1f%an%x1f%ae%x1f%ad%x1f%cn%x1f%ce%x1f%cd%x1f%P%x1f%s",
+            commit_hash,
+        ])
+        stat = self.runner.run(["show", "--stat", "--format=", commit_hash])
+        if not meta.ok:
+            self._set_branch_graph_detail_message(meta.output)
+            return
+        parts = meta.stdout.split("\x1f")
+        while len(parts) < 11:
+            parts.append("")
+        full_hash, short_hash, refs, author, author_email, author_date, committer, committer_email, commit_date, parents, subject = parts[:11]
+        self.branch_graph_detail.clear()
+
+        def section(title: str, rows: list[tuple[str, str]] | list[str], expanded: bool = True) -> QTreeWidgetItem:
+            root = QTreeWidgetItem([title])
+            self.branch_graph_detail.addTopLevelItem(root)
+            for row in rows:
+                if isinstance(row, tuple):
+                    key, value = row
+                    root.addChild(QTreeWidgetItem([f"{key}: {value or '-'}"]))
+                else:
+                    root.addChild(QTreeWidgetItem([row]))
+            root.setExpanded(expanded)
+            return root
+
+        section("Commit", [
+            ("Hash", full_hash),
+            ("Short", short_hash),
+            ("Refs", refs or "-"),
+        ])
+        section("Message", [subject or "-"])
+        section("Author", [
+            ("Name", author),
+            ("Email", author_email),
+            ("Date", author_date),
+        ], expanded=False)
+        section("Committer", [
+            ("Name", committer),
+            ("Email", committer_email),
+            ("Date", commit_date),
+        ])
+        parent_rows = [p for p in parents.split()] or ["<root>"]
+        section("Parents", parent_rows, expanded=False)
+        stat_lines = [line for line in stat.stdout.splitlines() if line.strip()] if stat.ok else [stat.output]
+        section("Changed files", stat_lines or ["(no stat)"], expanded=True)
 
     def graph_checkout_commit(self, commit_hash: str) -> None:
         self.run_git_command(["checkout", commit_hash], callback=lambda _: self.refresh_all())
@@ -2949,6 +3317,13 @@ class MainWindow(QMainWindow):
             return
         self._remember_repository(repo)
         self.refresh_all()
+
+    def show_user_accounts(self) -> None:
+        if hasattr(self, "tabs"):
+            self.tabs.setCurrentIndex(8)
+        if hasattr(self, "platform_tabs"):
+            self.platform_tabs.setCurrentIndex(0)
+        self.refresh_platform_statuses()
 
     def show_terminal_help(self) -> None:
         QMessageBox.information(

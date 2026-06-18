@@ -266,18 +266,18 @@ QPushButton#runButton {{
     padding: 3px 10px;
 }}
 
-QPushButton#contextActionButton {
+QPushButton#contextActionButton {{
     min-height: 24px;
     padding: 3px 6px;
-}
-QPushButton#contextActionWideButton {
+}}
+QPushButton#contextActionWideButton {{
     min-height: 24px;
     padding: 3px 8px;
-}
-QGroupBox#contextActionGroup {
+}}
+QGroupBox#contextActionGroup {{
     margin-top: 8px;
     padding: 6px;
-}
+}}
 
 QFrame#workspaceOverlay {{
     background-color: rgba(0, 0, 0, 150);
@@ -301,16 +301,22 @@ QLabel#workspacePromptMessage {{
     font-size: 13px;
 }}
 
-QLineEdit#workspacePromptInput {{
+QLineEdit#workspacePromptInput, QComboBox#workspacePromptInput {{
     background-color: {p['input']};
     color: {p['text']};
     border: 1px solid {p['border']};
-    border-radius: 4px;
-    padding: 7px 9px;
+    border-radius: 5px;
+    padding: 8px 10px;
+    min-height: 34px;
     selection-background-color: {accent};
 }}
-QLineEdit#workspacePromptInput:focus {{
+QLineEdit#workspacePromptInput:focus, QComboBox#workspacePromptInput:focus {{
     border: 1px solid {accent};
+}}
+QComboBox#workspacePromptInput QAbstractItemView {{
+    background-color: {p['panel']};
+    color: {p['text']};
+    selection-background-color: {p['selected']};
 }}
 QPushButton#workspacePromptBackButton, QPushButton#workspacePromptCancelButton {{
     background-color: {p['panel2']};
@@ -347,6 +353,14 @@ QLabel#RepoTargetLabel {{
     padding: 4px 10px;
     font-size: 12px;
     font-weight: 600;
+}}
+QLabel#ProviderStatusLabel {{
+    background-color: rgba(127, 127, 127, 28);
+    color: {p['text']};
+    border: 1px solid rgba(127, 127, 127, 56);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 12px;
 }}
 QTreeWidget, QListWidget {{
     background-color: {p['panel']};
@@ -536,34 +550,34 @@ QSplitter::handle:hover {{
     background-color: {accent};
 }}
 QScrollBar:vertical {{
-    background: {p['bg']};
-    width: 8px;
+    background: transparent;
+    width: 6px;
     margin: 0;
 }}
 QScrollBar::handle:vertical {{
-    background: {p['muted']};
+    background: rgba(127, 127, 127, 92);
     min-height: 24px;
-    border-radius: 4px;
+    border-radius: 3px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background: {accent};
+    background: rgba(127, 127, 127, 150);
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: transparent;
     height: 0;
 }}
 QScrollBar:horizontal {{
-    background: {p['bg']};
-    height: 8px;
+    background: transparent;
+    height: 6px;
     margin: 0;
 }}
 QScrollBar::handle:horizontal {{
-    background: {p['muted']};
+    background: rgba(127, 127, 127, 92);
     min-width: 24px;
-    border-radius: 4px;
+    border-radius: 3px;
 }}
 QScrollBar::handle:horizontal:hover {{
-    background: {accent};
+    background: rgba(127, 127, 127, 150);
 }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal, QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
     background: transparent;

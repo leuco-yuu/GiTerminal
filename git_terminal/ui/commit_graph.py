@@ -345,7 +345,10 @@ class CommitGraphView(QGraphicsView):
         label_y = y + 20
         # Keep node text compact: date only. Details are shown in the side panel.
         label_color = "#1f2937" if self.theme_mode == "light" else "#d4d4d4"
-        html = f"<span style='color:{label_color}; font-weight:700'>{commit.date}</span>"
+        display_date = commit.date
+        if len(display_date) >= 16 and display_date[4] == "-":
+            display_date = display_date[5:]
+        html = f"<span style='color:{label_color}; font-weight:700'>{display_date}</span>"
         text = QGraphicsTextItem()
         font = QFont("Segoe UI", 9)
         text.setFont(font)

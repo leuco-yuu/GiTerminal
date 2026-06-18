@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from typing import Callable, Iterable, Optional
@@ -42,8 +43,13 @@ class ShellCommandWorker(QObject):
     @pyqtSlot()
     def run(self) -> None:
         try:
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["LC_ALL"] = env.get("LC_ALL", "C.UTF-8")
+            env["LANG"] = env.get("LANG", "C.UTF-8")
+            env["LESSCHARSET"] = "utf-8"
             if sys.platform.startswith("win"):
-                cmd = ["cmd.exe", "/c", self.command]
+                cmd = ["cmd.exe", "/d", "/s", "/c", f"chcp 65001>nul & {self.command}"]
             else:
                 cmd = ["/bin/sh", "-lc", self.command]
             proc = subprocess.run(
@@ -54,6 +60,7 @@ class ShellCommandWorker(QObject):
                 encoding="utf-8",
                 errors="replace",
                 timeout=self.timeout,
+                env=env,
             )
             result = GitResult([self.command], self.cwd, proc.returncode, proc.stdout, proc.stderr)
         except Exception as exc:

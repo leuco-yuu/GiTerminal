@@ -265,3 +265,52 @@ git_terminal_project/
 - 右侧栏加入滚动容器，操作项较多时通过滚轮访问，不再挤压中央工作区。
 - 全局滚动条宽度从 12px 收窄为 8px，水平/垂直滚动条都更轻。
 - 中央工作区隐藏原按钮后，所有核心功能仍保留在右侧操作栏和顶部菜单中。
+
+## v0.6.3 更新
+
+- 修复 v0.6.2 启动崩溃：右侧 ACTIONS 栏引用了不存在的 `push_selected_tag` / `delete_selected_tag`，已改为现有的 `push_tag` / `delete_tag`。
+- 新增右侧 ACTIONS 构建块的静态引用检查，确认其中绑定的按钮方法均存在。
+- 保持中央工作区无按钮、右侧操作栏滚动、短按钮一行两个、长按钮一行一个的布局。
+
+## v0.6.4 更新
+
+- 修复 v0.6.3 启动崩溃：`theme.py` 中新增的 `contextActionButton` QSS 块没有转义 f-string 大括号，导致 `build_qss()` 抛出 `NameError: name 'height' is not defined`。
+- 新增主题构建检查：使用 PyQt stub 导入 `theme.py`，对深色/浅色 + 蓝/紫/绿/橙全部组合执行 `build_qss()`，确认不会再因 QSS f-string 大括号崩溃。
+- 重新检查右侧 ACTIONS 栏所有绑定方法，确认没有缺失方法引用。
+
+## v0.6.5 更新
+
+- 工作区页面重新调整比例：Changed / Staged / Untracked 三个列表在初始工作区中占主要空间，等宽展开，Diff 区域缩小为辅助区。
+- 历史页面重新调整比例：提交历史列表占满主要工作区，提交详情保留在下方辅助区。
+- 有向图页面固定保留右侧 commit 详情区域，设置最小详情宽度，避免图把详情区挤没。
+- 远程页面重新调整比例：Remote 列表占主要区域，输出日志作为下方辅助区。
+- 标签 / Stash 页面改为内部标签页：Tags 和 Stash 分开展示。
+- 平台页新增登录状态信息：GitHub / GitLab 自动检测 gh / glab 登录状态；未登录时显示登录指引；Gitee 根据 Token 和用户/组织输入状态提示配置步骤。
+- 右侧 ACTIONS 增加 Refresh Status，用于刷新平台登录状态。
+- 全局滚动条进一步收窄为 6px，并改为半透明样式，减少界面压迫感。
+
+## v0.6.6 更新
+
+- 修复打开仓库后布局被长路径、Push URL、upstream 信息撑爆的问题：顶部状态栏和提交目标栏改为可裁剪显示，不再参与强制最小宽度计算，完整内容通过 tooltip 查看。
+- `refresh_all()` 现在会保存并恢复左右栏、工作区和终端 splitter 尺寸，打开/刷新仓库不会把布局重置回旧状态。
+- 每次刷新后再次执行中央工作区按钮隐藏逻辑，确保打开仓库、刷新状态、切换分支后仍保持“中央只展示内容，操作在右侧 ACTIONS”的布局。
+
+## v0.6.7 更新
+
+- 工作区页面拆分为内部标签页：`Status` 使用 Changed / Staged / Untracked 三列列表填满区域；`Diff` 单独显示 diff 输出。
+- 右侧 ACTIONS > Changes 新增 `Commit Only...`，用于只提交已暂存内容，不自动执行 `git add`。
+- 有向图节点日期改为使用 committer date（`%cd`）而不是 author date（`%ad`），新提交节点会显示实际提交时间；节点标签显示为简短的 `MM-DD HH:mm`。
+- 有向图右侧详情改为结构化展示：Commit、Message、Author、Committer、Parents、Changed files 分块展示，不再直接整段打印 `git show --pretty=fuller`。
+
+## v0.6.8 更新
+
+- 终端输出统一强制 UTF-8：GitRunner 和 ShellCommandWorker 设置 `PYTHONIOENCODING=utf-8`、`LANG/LC_ALL`、`LESSCHARSET`；Windows shell 命令前执行 `chcp 65001`。
+- 终端日志改为富文本显示，命令、成功、失败、警告分别使用不同背景和文字颜色高亮。
+- 分支有向图页面不再被外层工作区滚动条包裹，图区域会随侧边栏/底部栏变化拉伸；仅右侧详情树和图视图本身保留滚动。
+- 有向图右侧详情改为可展开/折叠的树形结构：Commit、Message、Author、Committer、Parents、Changed files。
+- Diff 输出改为结构化文本展示，按 File / Hunk / META / ADD / DEL 分段。
+- 覆盖输入框高度和 padding 增大，修复输入字体显示不完整的问题。
+- 需要输入分支、tag、remote 等字段时自动使用可编辑下拉框，并填充已有本地/远程分支、tag 或 remote 建议。
+- 右侧 ACTIONS > Branch 新增 Merge To / Rebase To，支持选择已有分支作为目标。
+- Remote 区新增 SSH / credential 配置入口：SSH 信息、生成 ed25519 key、ssh-add、测试 GitHub SSH、credential.helper 配置。
+- 左下角用户图标接入 User 页面，可集中查看/配置 Git user.name、user.email 以及 GitHub/GitLab/Gitee 状态。

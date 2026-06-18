@@ -39,6 +39,10 @@ class GitRunner:
         env = os.environ.copy()
         env.setdefault("GIT_PAGER", "cat")
         env.setdefault("PAGER", "cat")
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["LC_ALL"] = env.get("LC_ALL", "C.UTF-8")
+        env["LANG"] = env.get("LANG", "C.UTF-8")
+        env["LESSCHARSET"] = "utf-8"
         # Prevent invisible terminal credential prompts from freezing the UI.
         env.setdefault("GIT_TERMINAL_PROMPT", "0")
         try:
